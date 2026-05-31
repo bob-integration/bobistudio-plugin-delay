@@ -1,0 +1,8 @@
+{
+  "published_at": "2026-05-30",
+  "changes": [
+    "Ligne à retard N→N : X entrées vidéo/audio retardées de D images vers X sorties correspondantes (délai global ou par canal)."
+  ],
+  "fixes": [],
+  "known_bugs": []
+}

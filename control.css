@@ -1,0 +1,46 @@
+/* UI de contrôle embarquée du plugin Délai (montée dans le shell Traitements).
+   Styles de l'éditeur uniquement (la sidebar/liste appartient au shell). */
+.dl-wrap { display:flex; flex-direction:column; gap:12px; }
+
+.dl-head { display:flex; align-items:center; gap:10px;
+    padding-bottom:8px; border-bottom:1px solid var(--border-soft); }
+.dl-badge { font-size:0.72em; font-weight:700; letter-spacing:0.04em; text-transform:uppercase;
+    padding:3px 7px; border-radius:4px; background:var(--accent-soft); color:var(--accent); }
+
+.dl-global { display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+    padding:10px 12px; background:var(--bg-input);
+    border:1px solid var(--border-soft); border-radius:6px; }
+.dl-global-label { font-weight:600; }
+.dl-spacer { flex:1; min-width:8px; }
+.dl-link { display:inline-flex; align-items:center; gap:6px; cursor:pointer; font-size:0.9em; }
+
+.dl-num { width:84px; padding:5px 8px; font-family:var(--font-mono);
+    background:var(--bg); color:var(--text); border:1px solid var(--border-soft); border-radius:4px; }
+.dl-num:focus { outline:none; border-color:var(--accent); }
+.dl-num:disabled { opacity:0.45; }
+.dl-global-num { width:96px; font-size:1.05em; }
+.dl-unit { color:var(--text-muted); font-size:0.85em; }
+
+.dl-rows-head, .dl-row {
+    display:grid; grid-template-columns: 48px 56px 96px 40px 1fr;
+    gap:8px; align-items:center; padding:4px 6px; }
+.dl-rows-head { font-size:0.72em; color:var(--text-muted); text-transform:uppercase;
+    letter-spacing:0.05em; padding-bottom:0; }
+.dl-rows { display:flex; flex-direction:column; gap:2px; }
+.dl-row { border-radius:4px; }
+.dl-row:nth-child(odd) { background:var(--bg-elev); }
+
+.dl-ch { font-weight:600; font-family:var(--font-mono); }
+.dl-tag { display:inline-block; font-size:0.7em; font-weight:700; padding:1px 4px;
+    border-radius:3px; margin-right:2px; }
+.dl-tag.v { background:rgba(96,165,250,0.18); color:#60a5fa; }
+.dl-tag.a { background:rgba(52,211,153,0.16); color:#34d399; }
+
+.dl-real { display:flex; align-items:center; gap:6px; font-size:0.9em; }
+.dl-real-dot { width:8px; height:8px; border-radius:50%; flex:none; }
+.dl-real-dot.on  { background:var(--status-running-fg); box-shadow:0 0 5px var(--status-running-fg); }
+.dl-real-dot.off { background:var(--border); }
+
+.dl-error { padding:8px 12px; border:1px solid var(--status-stopped-fg);
+    background:var(--status-stopped-bg); color:var(--status-stopped-fg);
+    border-radius:4px; font-size:0.88em; }
