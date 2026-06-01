@@ -1,37 +1,115 @@
 {
   "type": "delay",
   "label": "Délai",
-  "badge": { "label": "Délai", "class": "mode-corrector" },
-  "version": "0.1.0",
+  "badge": {
+    "label": "Délai",
+    "class": "mode-corrector"
+  },
+  "version": "0.1.1",
   "adapts_input": true,
   "description": "Ligne à retard N→N : X entrées vidéo/audio retardées de D images vers X sorties correspondantes. Délai global ou par canal, réglé en images, piloté à chaud (page Traitements). Vidéo seul (défaut), vidéo + audio, ou audio seul.",
-  "nav": { "section": "traitements", "label": "Traitements", "route": "/traitements/delay", "order": 50 },
+  "nav": {
+    "section": "traitements",
+    "label": "Traitements",
+    "route": "/traitements/delay",
+    "order": 50
+  },
   "script_template": "script.py",
   "video_format": false,
-  "ui": { "control_html": "control.html", "control_js": "control.js", "control_css": "control.css" },
+  "ui": {
+    "control_html": "control.html",
+    "control_js": "control.js",
+    "control_css": "control.css"
+  },
   "deploy_defaults": {
-    "n_channels": 1, "mode": "video", "max_delay_frames": 25, "delay_frames": 0
+    "n_channels": 1,
+    "mode": "video",
+    "max_delay_frames": 25,
+    "delay_frames": 0
   },
   "config_schema": [
-    { "key": "n_channels", "type": "number", "label": "Nombre de canaux", "min": 1, "max": 16, "default": 1 },
-    { "key": "mode", "type": "select", "label": "Essence", "default": "video",
-      "options": [ {"value":"video","label":"Vidéo seul"},
-                   {"value":"video_audio","label":"Vidéo + audio"},
-                   {"value":"audio","label":"Audio seul"} ] },
-    { "key": "max_delay_frames", "type": "number", "label": "Délai max (images vidéo · ms si audio seul)", "min": 1, "max": 10000, "default": 25 },
-    { "key": "delay_frames", "type": "number", "label": "Délai initial (images vidéo · ms si audio seul)", "min": 0, "max": 10000, "default": 0 }
+    {
+      "key": "n_channels",
+      "type": "number",
+      "label": "Nombre de canaux",
+      "min": 1,
+      "max": 16,
+      "default": 1
+    },
+    {
+      "key": "mode",
+      "type": "select",
+      "label": "Essence",
+      "default": "video",
+      "options": [
+        {
+          "value": "video",
+          "label": "Vidéo seul"
+        },
+        {
+          "value": "video_audio",
+          "label": "Vidéo + audio"
+        },
+        {
+          "value": "audio",
+          "label": "Audio seul"
+        }
+      ]
+    },
+    {
+      "key": "max_delay_frames",
+      "type": "number",
+      "label": "Délai max (images vidéo · ms si audio seul)",
+      "min": 1,
+      "max": 10000,
+      "default": 25
+    },
+    {
+      "key": "delay_frames",
+      "type": "number",
+      "label": "Délai initial (images vidéo · ms si audio seul)",
+      "min": 0,
+      "max": 10000,
+      "default": 0
+    }
   ],
   "wiring": {
     "produces": [
-      { "repeat": "video_channels", "essence": "video", "shm": "{hostname}_{i}",      "label": "Sortie V{i1}" },
-      { "repeat": "audio_channels", "essence": "audio", "shm": "{hostname}_audio_{i}", "label": "Sortie A{i1}" }
+      {
+        "repeat": "video_channels",
+        "essence": "video",
+        "shm": "{hostname}_{i}",
+        "label": "Sortie V{i1}"
+      },
+      {
+        "repeat": "audio_channels",
+        "essence": "audio",
+        "shm": "{hostname}_audio_{i}",
+        "label": "Sortie A{i1}"
+      }
     ],
     "consumes": [
-      { "repeat": "video_channels", "essence": "video", "state_field": "input_v_{i}", "label": "Entrée V{i1}" },
-      { "repeat": "audio_channels", "essence": "audio", "state_field": "input_a_{i}", "label": "Entrée A{i1}" }
+      {
+        "repeat": "video_channels",
+        "essence": "video",
+        "state_field": "input_v_{i}",
+        "label": "Entrée V{i1}"
+      },
+      {
+        "repeat": "audio_channels",
+        "essence": "audio",
+        "state_field": "input_a_{i}",
+        "label": "Entrée A{i1}"
+      }
     ],
     "mode": "hot-wire",
     "state_endpoint": "/state"
   },
-  "control": { "endpoints": ["/state", "/params", "/input"] }
+  "control": {
+    "endpoints": [
+      "/state",
+      "/params",
+      "/input"
+    ]
+  }
 }

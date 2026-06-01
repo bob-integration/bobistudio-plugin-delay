@@ -47,7 +47,7 @@ POLL_A      = 0.0005    # idem audio (chunks 1 ms)
 
 # ─── Format vidéo (yuv420p, taille auto-détectée) ───────────
 V_HEADER_SIZE = 64
-V_RING_SIZE   = 10
+V_RING_SIZE   = CONFIG.get("shm_video_ring", 10)
 
 # ─── Format audio (PCM L24 / 48k / 8ch, identique receiver_2110) ─
 A_SAMPLE_RATE = 48000
@@ -57,7 +57,7 @@ A_BYTES_PER_SAMPLE  = A_BIT_DEPTH // 8
 A_SAMPLES_PER_CHUNK = A_SAMPLE_RATE // 1000   # 48 (1 ms)
 A_CHUNK_SIZE  = A_SAMPLES_PER_CHUNK * A_CHANNELS * A_BYTES_PER_SAMPLE   # 1152
 A_HEADER_SIZE = 64
-A_RING_SIZE   = 100
+A_RING_SIZE   = CONFIG.get("shm_audio_ring", 100)
 A_TOTAL_SIZE  = A_HEADER_SIZE + A_RING_SIZE * A_CHUNK_SIZE
 
 # ─── État runtime partagé ───────────────────────────────────
