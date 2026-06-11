@@ -1,11 +1,11 @@
 {
-  "version": "0.2.0",
-  "date": "2026-06-05",
+  "version": "0.2.1",
+  "date": "2026-06-08",
   "changes": {
-    "Nouveautés": [
-      "Exécution sous Docker (runtime compute générique : image bobi-compute, agent-in-container + réseau macvlan, /dev/shm bind-monté). Le type devient docker-only — créé via Réglages → Déploiement → Nœuds sur un nœud compute (plus de vaisseau LXC)."
+    "Nouveautés": [],
+    "Corrections": [
+      "Exposition de inputs_latency_ms dans les métriques :8080 → le délai réalisé remonte dans la topologie (page Câbles : delay_in_ms sur les entrées du mélangeur en aval)."
     ],
-    "Corrections": [],
     "Bugs connus": []
   }
 }

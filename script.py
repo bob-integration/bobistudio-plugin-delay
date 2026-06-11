@@ -114,7 +114,14 @@ class MetricsHandler(BaseHTTPRequestHandler):
                                 "frame_index": m["frame_index"],
                                 "delay_frames": state["delays"][i],
                                 "delay_ms": m["ms"].avg()}})
-        payload = {{"channels": out, "plugin_version": PLUGIN_VERSION}}
+        ilm = {{}}
+        if HAS_VIDEO:
+            for i in range(N_CHANNELS):
+                shm = state["inputs_v"][i]
+                ms  = meas["v"][i]["ms"].avg()
+                if shm and ms is not None:
+                    ilm[shm] = round(ms, 1)
+        payload = {{"channels": out, "inputs_latency_ms": ilm, "plugin_version": PLUGIN_VERSION}}
         body = json.dumps(payload).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
