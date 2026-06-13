@@ -1,7 +1,10 @@
 {
-  "version": "0.2.1",
-  "date": "2026-06-08",
+  "version": "0.2.2",
+  "date": "2026-06-13",
   "changes": {
+    "Nouveautés (0.2.2)": [
+      "Latence page Câbles : inputs_latency_ms expose désormais le TRANSIT (âge de la trame à la lecture, sous-trame) au lieu du délai réalisé. Le délai PROPRE ajouté par le nœud (= son rôle) est exposé en own_latency_ms (:8080, max des canaux). Cohérent avec le suivi de chaîne (arête = arrivée, nœud = traitement) ; channels[].delay_ms (délai réalisé par canal) reste inchangé pour la page Delay."
+    ],
     "Nouveautés": [],
     "Corrections": [
       "Exposition de inputs_latency_ms dans les métriques :8080 → le délai réalisé remonte dans la topologie (page Câbles : delay_in_ms sur les entrées du mélangeur en aval)."

@@ -79,8 +79,8 @@ state = {{
 # le délai (en images) en chunks audio sans fps configuré.
 meas_lock = threading.Lock()
 meas = {{
-    "v": [{{"fps": 0.0, "frame_index": 0, "ms": RollingMs(), "realized": 0, "period": RollingMs()}} for _ in range(N_CHANNELS)],
-    "a": [{{"fps": 0.0, "frame_index": 0, "ms": RollingMs(), "realized": 0}} for _ in range(N_CHANNELS)],
+    "v": [{{"fps": 0.0, "frame_index": 0, "ms": RollingMs(), "realized": 0, "period": RollingMs(), "transit": RollingMs()}} for _ in range(N_CHANNELS)],
+    "a": [{{"fps": 0.0, "frame_index": 0, "ms": RollingMs(), "realized": 0, "transit": RollingMs()}} for _ in range(N_CHANNELS)],
 }}
 
 # SIGBUS : signale aux workers de rouvrir leurs mmap
@@ -114,14 +114,21 @@ class MetricsHandler(BaseHTTPRequestHandler):
                                 "frame_index": m["frame_index"],
                                 "delay_frames": state["delays"][i],
                                 "delay_ms": m["ms"].avg()}})
-        ilm = {{}}
+        # inputs_latency_ms = TRANSIT (âge à la lecture) ; own_latency_ms = délai PROPRE ajouté
+        # (réalisé), c.-à-d. le rôle même du nœud. Distinguer les deux pour le suivi de chaîne.
+        ilm = {{}}; own_vals = []
         if HAS_VIDEO:
             for i in range(N_CHANNELS):
                 shm = state["inputs_v"][i]
-                ms  = meas["v"][i]["ms"].avg()
-                if shm and ms is not None:
-                    ilm[shm] = round(ms, 1)
-        payload = {{"channels": out, "inputs_latency_ms": ilm, "plugin_version": PLUGIN_VERSION}}
+                tr  = meas["v"][i]["transit"].avg()
+                if shm and tr is not None:
+                    ilm[shm] = round(tr, 1)
+                ov = meas["v"][i]["ms"].avg()
+                if ov is not None:
+                    own_vals.append(ov)
+        own_latency_ms = round(max(own_vals), 1) if own_vals else None
+        payload = {{"channels": out, "inputs_latency_ms": ilm,
+                    "own_latency_ms": own_latency_ms, "plugin_version": PLUGIN_VERSION}}
         body = json.dumps(payload).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -366,6 +373,10 @@ def _worker(essence, idx):
             if not is_audio and prev_ts_in and ts_in > prev_ts_in:
                 with meas_lock:
                     meas["v"][idx]["period"].push((ts_in - prev_ts_in) / 1e6 / advance)
+            # TRANSIT (arrivée) = âge de la trame fraîche À LA LECTURE (≠ délai réalisé = own).
+            if ts_in:
+                with meas_lock:
+                    meas[essence][idx]["transit"].push((time.time_ns() - ts_in) / 1e6)
             prev_ts_in = ts_in
             last_in_idx = cur_idx
 
