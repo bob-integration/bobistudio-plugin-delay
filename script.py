@@ -21,6 +21,10 @@
 import mmap, struct, time, threading, json, os, signal
 from collections import deque
 from http.server import HTTPServer, BaseHTTPRequestHandler
+import numpy as np
+import bobimxl   # migration MXL Phase 1 : retard VIDÉO via Reader/Writer (audio = legacy mmap)
+
+_mxl_inst = bobimxl.Instance()   # domaine MXL ($MXL_DOMAIN ou /dev/shm/mxl)
 
 # ─── Latence : Δ ts_écriture - ts_origine (rolling avg) ─────
 class RollingMs:
@@ -420,11 +424,97 @@ def _worker(essence, idx):
         time.sleep(poll)
 
 
+def _worker_video(idx):
+    """Retard VIDÉO sur MXL : lit le flux d'entrée (Reader), rattrape sans drop via get(index)
+    pour un retard exact, et ré-émet décalé de D images via un Writer. Audio = _worker (legacy)."""
+    out_name = "%s_%d" % (HOSTNAME, idx)
+    reader = None; in_name = None; writer = None
+    buf = deque(); last_in_idx = -1; prev_ts = 0; out_idx = 0
+    fps_t0 = time.time(); fps_n = 0
+    while True:
+        if bus_error.is_set():
+            for h in (reader, writer):
+                try: h and h.close()
+                except Exception: pass
+            reader = writer = None; in_name = None; buf.clear(); last_in_idx = -1
+            time.sleep(0.5)
+        with state_lock:
+            wanted = state["inputs_v"][idx]; D = state["delays"][idx]
+        if wanted != in_name:
+            try: reader and reader.close()
+            except Exception: pass
+            reader = None; buf.clear(); last_in_idx = -1; in_name = wanted
+        if wanted and reader is None:
+            try:
+                reader = bobimxl.Reader(_mxl_inst, wanted); print("v[%d] câblé sur %s" % (idx, wanted))
+            except Exception:
+                reader = None
+        if reader is None:
+            with meas_lock: meas["v"][idx]["realized"] = 0
+            time.sleep(0.02); continue
+        try:
+            head = reader.head_index()
+        except Exception:
+            try: reader.close()
+            except Exception: pass
+            reader = None; time.sleep(0.02); continue
+        if head == bobimxl.MXL_UNDEFINED_INDEX or head <= 0:
+            time.sleep(POLL_V); continue
+        cur_idx = head - 1     # head = grain EN COURS d'écriture → dernier COMMITÉ = head-1
+        ts_in = reader.last_write_time()
+        if cur_idx < last_in_idx:                 # producteur recréé
+            buf.clear(); last_in_idx = -1
+        if cur_idx > 0 and cur_idx != last_in_idx:
+            advance = (cur_idx - last_in_idx) if last_in_idx >= 0 else 1
+            with meas_lock: pv = meas["v"][idx]["period"].avg()
+            est_ms = pv if (pv and pv > 0) else 40.0
+            start = (last_in_idx + 1) if last_in_idx >= 0 else cur_idx
+            if cur_idx - start + 1 > V_RING_SIZE:  # bornage à l'historique du flux
+                start = cur_idx - V_RING_SIZE + 1
+            for fi in range(start, cur_idx + 1):
+                got = reader.get(fi, 20_000_000)   # rattrapage sans drop (grain fi précis)
+                if got is None:
+                    continue                       # grain hors historique → sauté
+                ts_est = ts_in - int((cur_idx - fi) * est_ms * 1e6)
+                buf.append((bytes(got[2]), ts_est))
+            if prev_ts and ts_in > prev_ts:
+                with meas_lock: meas["v"][idx]["period"].push((ts_in - prev_ts) / 1e6 / max(1, advance))
+            with meas_lock: meas["v"][idx]["transit"].push((bobimxl.now_tai() - ts_in) / 1e6)
+            prev_ts = ts_in; last_in_idx = cur_idx
+            if writer is None:
+                f = reader.format()
+                if f:
+                    writer = bobimxl.Writer(_mxl_inst, out_name, f["width"], f["height"],
+                                            f["chroma"], f["bit_depth"], f["fps_num"], f["fps_den"],
+                                            index_mode="free")
+            while writer is not None and len(buf) > D:
+                data, ts_orig = buf.popleft()
+                try:
+                    _i, gi, vw = writer.open_grain()
+                    vw[:len(data)] = np.frombuffer(data, dtype=np.uint8)
+                    writer.commit(gi)
+                except Exception:
+                    try: writer.close()
+                    except Exception: pass
+                    writer = None; break
+                out_idx += 1; fps_n += 1
+                with meas_lock:
+                    meas["v"][idx]["ms"].push((bobimxl.now_tai() - ts_orig) / 1e6)
+                    meas["v"][idx]["realized"] = len(buf)
+        now = time.time()
+        if now - fps_t0 >= 1.0:
+            with meas_lock:
+                meas["v"][idx]["fps"] = round(fps_n / (now - fps_t0), 1)
+                meas["v"][idx]["frame_index"] = out_idx
+            fps_t0 = now; fps_n = 0
+        time.sleep(POLL_V)
+
+
 # ─── Démarrage des workers + reaper SIGBUS ──────────────────
 threads = []
 for i in range(N_CHANNELS):
     if HAS_VIDEO:
-        threads.append(threading.Thread(target=_worker, args=("v", i), daemon=True))
+        threads.append(threading.Thread(target=_worker_video, args=(i,), daemon=True))
     if HAS_AUDIO:
         threads.append(threading.Thread(target=_worker, args=("a", i), daemon=True))
 for t in threads:

@@ -1,7 +1,10 @@
 {
-  "version": "0.2.2",
-  "date": "2026-06-13",
+  "version": "0.3.0",
+  "date": "2026-06-21",
   "changes": {
+    "Nouveautés (0.3.0)": [
+      "Migration MXL (Phase 1) : retard VIDÉO via bobimxl (worker _worker_video séparé) — Reader (format flow_def) + rattrapage SANS drop via get(index) pour un retard exact + Writer (index libre). AUDIO inchangé (worker legacy mmap, différé Phase 2). Requiert bobi-compute >= 0.5."
+    ],
     "Nouveautés (0.2.2)": [
       "Latence page Câbles : inputs_latency_ms expose désormais le TRANSIT (âge de la trame à la lecture, sous-trame) au lieu du délai réalisé. Le délai PROPRE ajouté par le nœud (= son rôle) est exposé en own_latency_ms (:8080, max des canaux). Cohérent avec le suivi de chaîne (arête = arrivée, nœud = traitement) ; channels[].delay_ms (délai réalisé par canal) reste inchangé pour la page Delay."
     ],
