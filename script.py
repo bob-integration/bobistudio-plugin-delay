@@ -18,11 +18,11 @@
 # Template str.format : SEULS {config} / {hostname} / {plugin_version} sont des
 # placeholders. TOUTE autre accolade littérale doit être doublée {{ }}.
 # ─────────────────────────────────────────────────────────────────────────────
-import mmap, struct, time, threading, json, os, signal
+import time, threading, json, signal
 from collections import deque
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import numpy as np
-import bobimxl   # migration MXL Phase 1 : retard VIDÉO via Reader/Writer (audio = legacy mmap)
+import bobimxl   # migration MXL : retard vidéo (Reader/Writer) + audio (AudioReader/AudioWriter) — Phases 1/3
 
 _mxl_inst = bobimxl.Instance()   # domaine MXL ($MXL_DOMAIN ou /dev/shm/mxl)
 
@@ -87,10 +87,10 @@ meas = {{
     "a": [{{"fps": 0.0, "frame_index": 0, "ms": RollingMs(), "realized": 0, "transit": RollingMs()}} for _ in range(N_CHANNELS)],
 }}
 
-# SIGBUS : signale aux workers de rouvrir leurs mmap
+# SIGBUS : signale aux workers de rouvrir leurs flux MXL
 bus_error = threading.Event()
 def _handle_sigbus(signum, frame):
-    print("SIGBUS reçu — réouverture des mmap")
+    print("SIGBUS reçu — réouverture des flux MXL")
     bus_error.set()
 signal.signal(signal.SIGBUS, _handle_sigbus)
 
@@ -232,32 +232,6 @@ threading.Thread(target=lambda: HTTPServer(("0.0.0.0", 8082), ControlHandler).se
 
 
 # ─── Worker générique (vidéo ou audio) ──────────────────────
-def _open_input(name, header_size, ring_size):
-    """Ouvre un shm d'entrée en lecture, auto-détecte la taille de frame depuis la
-    taille du fichier ((filesize - header) / ring). Renvoie (file, mmap, total, frame)
-    ou None."""
-    path = "/dev/shm/%s" % name
-    try:
-        if not os.path.exists(path): return None
-        size = os.path.getsize(path)
-        frame = (size - header_size) // ring_size
-        if frame <= 0: return None
-        total = header_size + ring_size * frame
-        f = open(path, "r+b")
-        shm = mmap.mmap(f.fileno(), total, prot=mmap.PROT_READ)
-        return (f, shm, total, frame)
-    except Exception as e:
-        print("input (%s) indisponible : %s" % (name, e))
-        return None
-
-def _open_output(name, total):
-    path = "/dev/shm/%s" % name
-    with open(path, "wb") as f:
-        f.write(b"\x00" * total)
-    f = open(path, "r+b")
-    return f, mmap.mmap(f.fileno(), total)
-
-
 def _worker(essence, idx):
     """Retard AUDIO d'un canal : lit le FLUX MXL d'entrée (gapless, blocs de 1 ms), tamponne D blocs
     (1 bloc = 1 ms) puis ré-émet dans le flux MXL de sortie. (La vidéo a son propre _worker_video.)
