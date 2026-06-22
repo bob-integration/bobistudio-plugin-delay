@@ -1,7 +1,10 @@
 {
-  "version": "0.3.0",
-  "date": "2026-06-21",
+  "version": "0.4.0",
+  "date": "2026-06-22",
   "changes": {
+    "Bascule audio MXL (0.4.0)": [
+      "Migration MXL Phase 3 : le retard AUDIO lit/écrit des flux MXL float32 (AudioReader gapless → tampon D blocs 1 ms → AudioWriter). La vidéo était déjà MXL. REBUILD IMAGE REQUIS."
+    ],
     "Nouveautés (0.3.0)": [
       "Migration MXL (Phase 1) : retard VIDÉO via bobimxl (worker _worker_video séparé) — Reader (format flow_def) + rattrapage SANS drop via get(index) pour un retard exact + Writer (index libre). AUDIO inchangé (worker legacy mmap, différé Phase 2). Requiert bobi-compute >= 0.5."
     ],

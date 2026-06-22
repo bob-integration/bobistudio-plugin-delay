@@ -259,169 +259,106 @@ def _open_output(name, total):
 
 
 def _worker(essence, idx):
-    """Boucle de retard pour un canal. essence = 'v' (vidéo) ou 'a' (audio)."""
-    is_audio = (essence == "a")
-    header_size = A_HEADER_SIZE if is_audio else V_HEADER_SIZE
-    ring_size   = A_RING_SIZE   if is_audio else V_RING_SIZE
-    out_name    = ("%s_audio_%d" % (HOSTNAME, idx)) if is_audio else ("%s_%d" % (HOSTNAME, idx))
-    poll = POLL_A if is_audio else POLL_V
-
-    in_handle = None      # (file, mmap, total, frame) ou None
-    in_name   = None
-    out_handle = None     # (file, mmap) ou None
-    out_total = None
-    buf = deque()         # (frame_bytes, ts_in_ns)
-    last_in_idx = 0
-    prev_ts_in = 0        # vidéo : ts producteur de la frame précédente (mesure période)
+    """Retard AUDIO d'un canal : lit le FLUX MXL d'entrée (gapless, blocs de 1 ms), tamponne D blocs
+    (1 bloc = 1 ms) puis ré-émet dans le flux MXL de sortie. (La vidéo a son propre _worker_video.)
+    `essence` vaut toujours 'a' (appelé ainsi). Migration MXL Phase 3 : plus de ring shm s24be."""
+    out_name = "%s_audio_%d" % (HOSTNAME, idx)
+    ar = None; in_name = None; writer = None
+    buf = deque()              # (bloc float32 (n,8), t_read_ns)
+    read_pos = None            # index sample consommé (lecture gapless)
     out_idx = 0
     fps_t0 = time.time(); fps_n = 0
 
-    def _close_in():
-        nonlocal in_handle
-        if in_handle is not None:
-            try: in_handle[1].close(); in_handle[0].close()
+    def _close_ar():
+        nonlocal ar
+        if ar is not None:
+            try: ar.close()
             except Exception: pass
-            in_handle = None
-
-    def _close_out():
-        nonlocal out_handle
-        if out_handle is not None:
-            try: out_handle[1].close(); out_handle[0].close()
-            except Exception: pass
-            out_handle = None
+            ar = None
 
     while True:
         if bus_error.is_set():
-            # Un seul Event partagé : on rouvre tout et on laisse l'Event se reclear
-            # via le worker vidéo principal (idempotent ici : on rouvre nos handles).
-            _close_in(); _close_out()
-            in_name = None; out_total = None; buf.clear(); last_in_idx = 0
+            _close_ar()
+            if writer is not None:
+                try: writer.close()
+                except Exception: pass
+                writer = None
+            in_name = None; buf.clear(); read_pos = None
             time.sleep(0.5)
 
         with state_lock:
-            wanted = state["inputs_a"][idx] if is_audio else state["inputs_v"][idx]
+            wanted = state["inputs_a"][idx]
             D_frames = state["delays"][idx]
-        if is_audio:
-            if AUDIO_ONLY:
-                # Audio seul : le délai est une DURÉE en ms (1 chunk = 1 ms). Aucun fps.
-                D = int(round(D_frames))
-            else:
-                # Vidéo + audio : délai en IMAGES → ms via la période image auto-détectée
-                # de l'entrée vidéo appariée. Tant qu'elle est inconnue (1ères frames),
-                # on passe l'audio sans retard plutôt que de désynchroniser.
-                with meas_lock:
-                    pv = meas["v"][idx]["period"].avg()
-                D = int(round(D_frames * pv)) if (pv and pv > 0) else 0
+        if AUDIO_ONLY:
+            D = int(round(D_frames))                 # audio seul : délai = durée en ms (1 bloc = 1 ms)
         else:
-            D = D_frames
+            with meas_lock:                          # apparié vidéo : délai en images → ms (période vidéo)
+                pv = meas["v"][idx]["period"].avg()
+            D = int(round(D_frames * pv)) if (pv and pv > 0) else 0
+        if D < 0: D = 0
 
-        # (Re)câblage de l'entrée
+        # (re)câblage de l'entrée
         if wanted != in_name:
-            _close_in(); buf.clear(); last_in_idx = 0
-            in_name = wanted
-            if wanted:
-                in_handle = _open_input(wanted, header_size, ring_size)
-                if in_handle is not None:
-                    print("%s[%d] câblé sur %s" % (essence, idx, wanted))
-        elif wanted and in_handle is None:
-            in_handle = _open_input(wanted, header_size, ring_size)
+            _close_ar(); buf.clear(); read_pos = None; in_name = wanted
+        if wanted and ar is None:
+            try:
+                ar = bobimxl.AudioReader(_mxl_inst, wanted); read_pos = None
+                print("a[%d] câblé sur %s" % (idx, wanted))
+            except Exception:
+                ar = None
+        if ar is None:
+            with meas_lock: meas["a"][idx]["realized"] = 0
+            time.sleep(0.02); continue
 
-        if in_handle is None:
-            with meas_lock:
-                meas[essence][idx]["realized"] = 0
-            time.sleep(0.02)
-            continue
-
-        f_in, shm_in, total_in, frame_in = in_handle
-
-        # Lecture du header d'entrée
+        # lecture gapless des blocs disponibles (suivi de position, resync sur head au décrochage)
         try:
-            cur_idx, ts_in = struct.unpack("QQ", shm_in[0:16])
+            head = ar.head_index()
         except Exception:
-            _close_in(); in_handle = None; time.sleep(0.02); continue
-
-        # Reset producteur (shm recréé au redémarrage d'un receiver) → rouvre
-        if cur_idx < last_in_idx:
-            _close_in(); in_handle = None; buf.clear(); last_in_idx = 0
-            continue
-
-        # Nouvelle(s) frame(s)/chunk(s) disponible(s)
-        if cur_idx > 0 and cur_idx != last_in_idx:
-            advance = cur_idx - last_in_idx
-            # Période estimée par frame (ms) pour interpoler le ts des frames rattrapées
-            # et (vidéo) alimenter le fps auto-détecté.
-            if is_audio:
-                est_ms = 1.0   # 1 chunk = 1 ms
-            else:
+            _close_ar(); time.sleep(0.02); continue
+        read_any = False
+        if head != bobimxl.MXL_UNDEFINED_INDEX:
+            if read_pos is None: read_pos = head
+            guard = 0
+            while read_pos <= head and guard < 512:
+                r = ar.read_from(read_pos, A_SAMPLES_PER_CHUNK)
+                if r is None:
+                    if read_pos < head: read_pos = head; continue
+                    break
+                buf.append((r, time.time_ns()))
+                read_pos += A_SAMPLES_PER_CHUNK; guard += 1; read_any = True
+            if read_any:
                 with meas_lock:
-                    pv = meas["v"][idx]["period"].avg()
-                est_ms = pv if (pv and pv > 0) else 40.0
-            # Rattrape TOUTES les frames depuis la dernière lue (audio sample-accurate ;
-            # vidéo : pas de drop). Bornage au ring pour ne pas relire un slot réécrit.
-            start = last_in_idx + 1
-            if advance >= ring_size:
-                start = cur_idx - ring_size + 1
-            ok = True
-            for fi in range(start, cur_idx + 1):
-                slot = fi % ring_size
-                off = header_size + slot * frame_in
-                try:
-                    data = bytes(shm_in[off:off + frame_in])
-                except Exception:
-                    ok = False; break
-                ts_est = ts_in - int((cur_idx - fi) * est_ms * 1e6)   # ts producteur interpolé
-                buf.append((data, ts_est))
-            if not ok:
-                _close_in(); in_handle = None; time.sleep(0.02); continue
-            # Vidéo : période inter-frames (ts producteur) ÷ avance → fps auto-détecté.
-            if not is_audio and prev_ts_in and ts_in > prev_ts_in:
-                with meas_lock:
-                    meas["v"][idx]["period"].push((ts_in - prev_ts_in) / 1e6 / advance)
-            # TRANSIT (arrivée) = âge de la trame fraîche À LA LECTURE (≠ délai réalisé = own).
-            if ts_in:
-                with meas_lock:
-                    meas[essence][idx]["transit"].push((time.time_ns() - ts_in) / 1e6)
-            prev_ts_in = ts_in
-            last_in_idx = cur_idx
+                    meas["a"][idx]["transit"].push((bobimxl.now_tai() - ar.last_write_time()) / 1e6)
 
-            # (Re)crée la sortie à la taille de l'entrée si besoin
-            if out_handle is None or out_total != total_in:
-                _close_out()
-                try:
-                    out_handle = _open_output(out_name, total_in)
-                    out_total = total_in
-                except Exception as e:
-                    print("sortie %s : %s" % (out_name, e)); time.sleep(0.1); continue
+        # sortie : flux MXL audio (cadence libre — le retard vient du tampon, pas de la grille)
+        if writer is None:
+            try:
+                writer = bobimxl.AudioWriter(_mxl_inst, out_name, channels=A_CHANNELS,
+                                             sample_rate=A_SAMPLE_RATE, index_mode="free")
+            except Exception:
+                writer = None
+        # émet les blocs dont le retard D (en blocs = ms) est atteint (flush multiple si D a baissé)
+        while writer is not None and len(buf) > D:
+            blk, t_read = buf.popleft()
+            try:
+                writer.write(blk)
+            except Exception:
+                try: writer.close()
+                except Exception: pass
+                writer = None; break
+            out_idx += 1; fps_n += 1
+            with meas_lock:
+                meas["a"][idx]["ms"].push((time.time_ns() - t_read) / 1e6)   # retard réalisé (own)
+                meas["a"][idx]["realized"] = len(buf)
 
-            # Émet les frames dont le retard est atteint (flush multiple si D a baissé)
-            while len(buf) > D:
-                data, ts_orig = buf.popleft()
-                fo, shm_out = out_handle
-                wslot = out_idx % ring_size
-                woff = header_size + wslot * frame_in
-                try:
-                    shm_out[woff:woff + frame_in] = data
-                    if is_audio:
-                        shm_out[0:24] = struct.pack("QQIHH", out_idx, time.time_ns(),
-                                                    A_SAMPLE_RATE, A_CHANNELS, A_BIT_DEPTH)
-                    else:
-                        shm_out[0:16] = struct.pack("QQ", out_idx, time.time_ns())
-                except Exception:
-                    _close_out(); out_handle = None; break
-                out_idx += 1; fps_n += 1
-                with meas_lock:
-                    meas[essence][idx]["ms"].push((time.time_ns() - ts_orig) / 1e6)
-                    meas[essence][idx]["realized"] = len(buf)
-
-        # Métriques fps (~1×/s)
         now = time.time()
         if now - fps_t0 >= 1.0:
             with meas_lock:
-                meas[essence][idx]["fps"] = round(fps_n / (now - fps_t0), 1)
-                meas[essence][idx]["frame_index"] = out_idx
+                meas["a"][idx]["fps"] = round(fps_n / (now - fps_t0), 1)
+                meas["a"][idx]["frame_index"] = out_idx
             fps_t0 = now; fps_n = 0
 
-        time.sleep(poll)
+        time.sleep(POLL_A)
 
 
 def _worker_video(idx):
