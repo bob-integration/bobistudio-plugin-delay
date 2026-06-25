@@ -387,7 +387,7 @@ def _worker_video(idx):
                 if got is None:
                     continue                       # grain hors historique → sauté
                 ts_est = ts_in - int((cur_idx - fi) * est_ms * 1e6)
-                buf.append((bytes(got[2]), ts_est))
+                buf.append((bytes(got[2]), ts_est, fi))
             if prev_ts and ts_in > prev_ts:
                 with meas_lock: meas["v"][idx]["period"].push((ts_in - prev_ts) / 1e6 / max(1, advance))
             with meas_lock: meas["v"][idx]["transit"].push((bobimxl.now_tai() - ts_in) / 1e6)
@@ -395,13 +395,17 @@ def _worker_video(idx):
             if writer is None:
                 f = reader.format()
                 if f:
-                    writer = bobimxl.Writer(_mxl_inst, out_name, f["width"], f["height"],
-                                            f["chroma"], f["bit_depth"], f["fps_num"], f["fps_den"],
-                                            index_mode="free")
+                    # champ-natif : on déclare la sortie au format TRAME + interlace (passthrough) ;
+                    # le grain forwardé = 1 champ, écrit à l'index d'entrée (parité préservée).
+                    writer = bobimxl.Writer(_mxl_inst, out_name, f["width"],
+                                            f.get("frame_height", f["height"]), f["chroma"],
+                                            f["bit_depth"], f.get("frame_fps_num", f["fps_num"]),
+                                            f["fps_den"], index_mode="free",
+                                            interlace=f.get("interlace_mode", "progressive"))
             while writer is not None and len(buf) > D:
-                data, ts_orig = buf.popleft()
+                data, ts_orig, in_idx = buf.popleft()
                 try:
-                    _i, gi, vw = writer.open_grain()
+                    _i, gi, vw = writer.open_grain(index=in_idx)   # index d'entrée → parité de champ
                     vw[:len(data)] = np.frombuffer(data, dtype=np.uint8)
                     writer.commit(gi)
                 except Exception:
