@@ -37,9 +37,15 @@ window.MXLPlugins.delay = (function () {
         }
     }
 
+    // Passe par l'orchestrateur (pas le proxy /plugin direct) : persiste en DB (params
+    // survivent au redeploy/restart) puis hot-push :8082/params côté conteneur.
     async function postParams(body) {
         try {
-            const r = await api('/params', body);
+            const r = await fetch(`/api/containers/${VMID}/control/params`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body || {}),
+            });
             if (!r.ok) throw new Error('HTTP ' + r.status);
         } catch (e) { TOAST('Réglage : ' + e.message, 'error'); }
     }

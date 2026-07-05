@@ -70,10 +70,28 @@ A_RING_SIZE   = CONFIG.get("shm_audio_ring", 100)
 A_TOTAL_SIZE  = A_HEADER_SIZE + A_RING_SIZE * A_CHUNK_SIZE
 
 # ─── État runtime partagé ───────────────────────────────────
+# Reprise des réglages live persistés (hook control_action) : channel_delays/link, sinon
+# comportement historique (délai initial global INIT_DELAY, link activé par défaut).
+def _boot_clamp(v, default):
+    try:
+        return max(0, min(MAX_DELAY, int(round(float(v)))))
+    except (TypeError, ValueError):
+        return default
+
+_cd_cfg = CONFIG.get("channel_delays")
+if isinstance(_cd_cfg, list) and _cd_cfg:
+    _boot_delays = [_boot_clamp(v, INIT_DELAY) for v in _cd_cfg[:N_CHANNELS]]
+    if len(_boot_delays) < N_CHANNELS:
+        _boot_delays += [INIT_DELAY] * (N_CHANNELS - len(_boot_delays))
+else:
+    _boot_delays = [INIT_DELAY] * N_CHANNELS
+_link_cfg = CONFIG.get("link")
+_boot_link = bool(_link_cfg) if _link_cfg is not None else True
+
 state_lock = threading.Lock()
 state = {{
-    "delays":   [INIT_DELAY] * N_CHANNELS,   # consigne par canal, en IMAGES
-    "link":     True,                        # délai global (les canaux suivent)
+    "delays":   _boot_delays,                # consigne par canal, en IMAGES
+    "link":     _boot_link,                  # délai global (les canaux suivent)
     "inputs_v": [(CONFIG.get("input_v_%d" % i) or None) for i in range(N_CHANNELS)],
     "inputs_a": [(CONFIG.get("input_a_%d" % i) or None) for i in range(N_CHANNELS)],
 }}

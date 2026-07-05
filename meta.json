@@ -1,7 +1,10 @@
 {
-  "version": "0.4.1",
-  "date": "2026-06-22",
+  "version": "0.6.0",
+  "date": "2026-07-05",
   "changes": {
+    "Nouveautés (0.6.0)": [
+      "Persistance des délais réglés en live (page Traitements) via le hook control_action : délai global, par canal, mode lié — les réglages survivent désormais au redeploy/restart (jusqu'ici seul le délai initial au déploiement était repris au boot). L'UI passe par /api/containers/<vmid>/control/params (persistance DB + hot-push :8082/params) au lieu du proxy /plugin direct."
+    ],
     "Ménage (0.4.1)": [
       "Ménage : retrait des helpers shm/mmap legacy `_open_input`/`_open_output` (sans appelant) + imports mmap/struct/os inutiles. Aucun changement de comportement."
     ],
