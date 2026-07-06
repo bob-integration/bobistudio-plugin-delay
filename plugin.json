@@ -115,5 +115,32 @@
       "/params",
       "/input"
     ]
-  }
+  },
+  "actions": [
+    {
+      "id": "set_delay",
+      "label": "Régler le retard (global)",
+      "endpoint": "/params",
+      "body": {
+        "all": true
+      },
+      "params": [
+        {
+          "key": "delay_frames",
+          "label": "Retard (images)",
+          "type": "number",
+          "default": 0
+        }
+      ]
+    }
+  ],
+  "state": [
+    {
+      "id": "link",
+      "label": "Canaux liés",
+      "endpoint": "/state",
+      "path": "link",
+      "type": "bool"
+    }
+  ]
 }
