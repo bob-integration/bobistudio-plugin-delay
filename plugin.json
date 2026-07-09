@@ -132,6 +132,42 @@
           "default": 0
         }
       ]
+    },
+    {
+      "id": "set_delay_channel",
+      "label": "Régler le retard d'un canal",
+      "endpoint": "/params",
+      "params": [
+        {
+          "key": "channel",
+          "label": "Canal (1er = 0)",
+          "type": "number",
+          "default": 0
+        },
+        {
+          "key": "delay_frames",
+          "label": "Retard (images)",
+          "type": "number",
+          "default": 0
+        }
+      ]
+    },
+    {
+      "id": "link",
+      "label": "Lier les canaux",
+      "endpoint": "/params",
+      "params": [
+        {
+          "key": "link",
+          "label": "Liés",
+          "type": "bool",
+          "default": true
+        }
+      ],
+      "feedback": {
+        "state": "link",
+        "value_from": "link"
+      }
     }
   ],
   "state": [
