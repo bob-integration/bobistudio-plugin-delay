@@ -15,6 +15,20 @@
 # Résolution-agnostique : la taille de frame vidéo est auto-détectée depuis la taille
 # du fichier shm d'entrée (ring=10, YUV420) — pas besoin de width/height.
 #
+# MODE TRANCHE (slice_mode, chantier latence sous-trame, cf. patch mxl-planar-slices) :
+#   - D ≥ 1 : le grain source à ré-émettre est DÉJÀ COMPLET (aucune attente par bande n'a de
+#     sens) → rattrapage tamponné identique à l'historique, mais la sortie est RE-TRANCHÉE
+#     (copie bande par bande + commit progressif validSlices=1..N, quasi gratuit) → l'aval
+#     slice-aware garde le bénéfice et démarre sur la 1ʳᵉ bande.
+#   - D == 0 : la vidéo SUIT le grain de TÊTE par tranche (pattern UDC _worker_slices :
+#     get_slice(h,1) puis j=1..totalSlices, budget 1,5×période, repli grain complet h-1,
+#     commit FINAL toujours) → l'étage passe de ~+1 trame à ~+1 ms.
+#   Convention (identique moteur/pyramide/udc/multiview) : k tranches ⇔ lignes image
+#   [0, k·slice_height) valides SUR LES 3 PLANS (Y|Cb|Cr). Éligibilité : source PROGRESSIVE
+#   + hauteur divisible (algo pyramide _proxy_slice_h) ; sinon repli loggé (chemin historique).
+#   L'audio n'est PAS concerné (retard par tampon de blocs 1 ms, inchangé). slice_mode
+#   absent/False → comportement STRICTEMENT octet-identique à l'historique.
+#
 # Template str.format : SEULS {config} / {hostname} / {plugin_version} sont des
 # placeholders. TOUTE autre accolade littérale doit être doublée {{ }}.
 # ─────────────────────────────────────────────────────────────────────────────
@@ -53,6 +67,35 @@ HAS_AUDIO   = MODE in ("audio", "video_audio")
 AUDIO_ONLY  = HAS_AUDIO and not HAS_VIDEO
 POLL_V      = 0.004     # cadence de scrutation des nouvelles frames vidéo (~250 Hz)
 POLL_A      = 0.0005    # idem audio (chunks 1 ms)
+
+# ── MODE TRANCHE (chantier latence sous-trame, cf. patch mxl-planar-slices) ─────────────────
+# slice_mode=true → cf. en-tête. slice_lines pilote la granularité CIBLE des tranches de
+# sortie (36 lignes ≈ 1080/30 → ~30 tranches), adaptée à la hauteur réelle via _out_slice_h.
+_slm = CONFIG.get("slice_mode", False)
+SLICE_MODE  = _slm if isinstance(_slm, bool) else str(_slm).strip().lower() in ("1", "true", "yes", "on")
+SLICE_LINES = max(1, int(CONFIG.get("slice_lines") or 36))
+_SLICE_TARGET = max(1, 1080 // SLICE_LINES)
+
+_CHROMA_DIV = {{"420": (2, 2), "422": (2, 1), "444": (1, 1)}}
+
+def _out_slice_h(oh, ch=1):
+    """MODE TRANCHE — slice_height de la sortie (même algo que pyramide _proxy_slice_h) : le
+    plus petit diviseur sh de oh avec sh ≥ max(1, oh // _SLICE_TARGET), MULTIPLE de ch (lignes
+    chroma entières par bande, sinon la dernière ligne d'une bande impaire en 420 pointerait
+    une ligne chroma non écrite). Aucun diviseur raisonnable (sh > oh//2, ex. hauteur
+    première) → 0 = inéligible (whole-frame, chemin historique)."""
+    lo = max(1, oh // _SLICE_TARGET)
+    for sh in range(lo, oh // 2 + 1):
+        if oh % sh == 0 and sh % ch == 0:
+            return sh
+    return 0
+
+# Watchdog Reader périmé (suivi de tête D==0) : source qui n'avance plus depuis ce délai alors
+# que le flux existe = shm probablement RECRÉÉ sous le même nom → rouvrir le Reader (cf. pyramide).
+_STALE_REOPEN_NS = 500_000_000
+
+# Vrai dès qu'un canal vidéo produit effectivement une sortie tranchée (exposé sur :8080).
+_slice_active = [False]
 
 # ─── Format vidéo (yuv420p, taille auto-détectée) ───────────
 V_HEADER_SIZE = 64
@@ -150,7 +193,8 @@ class MetricsHandler(BaseHTTPRequestHandler):
                     own_vals.append(ov)
         own_latency_ms = round(max(own_vals), 1) if own_vals else None
         payload = {{"channels": out, "inputs_latency_ms": ilm,
-                    "own_latency_ms": own_latency_ms, "plugin_version": PLUGIN_VERSION}}
+                    "own_latency_ms": own_latency_ms, "slice_mode": _slice_active[0],
+                    "plugin_version": PLUGIN_VERSION}}
         body = json.dumps(payload).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -353,19 +397,89 @@ def _worker(essence, idx):
         time.sleep(POLL_A)
 
 
+# ─── MODE TRANCHE : helpers vidéo (copie identité par bande) ─
+def _copy_band(dst, src, a, b, geo):
+    """MODE TRANCHE — copie IDENTITÉ des lignes image [a, b) sur les 3 plans (Y|Cb|Cr) du
+    payload planar, en OCTETS plats (aucun reshape — le retard ne rééchantillonne pas).
+    `b` est aligné chroma par l'appelant (sr -= sr % ch). Renvoie b (cumul de lignes écrites)."""
+    if b <= a:
+        return a
+    yr = geo["y_row"]
+    dst[a * yr:b * yr] = src[a * yr:b * yr]
+    ca = a // geo["ch"]; cb = b // geo["ch"]
+    if cb > ca:
+        ur = geo["uv_row"]; o1 = geo["y_sz"]; o2 = geo["y_sz"] + geo["uv_sz"]
+        dst[o1 + ca * ur:o1 + cb * ur] = src[o1 + ca * ur:o1 + cb * ur]
+        dst[o2 + ca * ur:o2 + cb * ur] = src[o2 + ca * ur:o2 + cb * ur]
+    return b
+
+
+def _emit_frame_sliced(writer, geo, in_idx, data):
+    """MODE TRANCHE, D ≥ 1 — ré-émet un grain source déjà COMPLET en le RE-TRANCHANT : copie
+    bande par bande + commit progressif (validSlices=1..N, quasi gratuit) → l'aval slice-aware
+    démarre sur la 1ʳᵉ bande au lieu d'attendre la trame. Index source propagé (open_grain
+    (index=in_idx), même contrat que l'historique : parité de champ / retard par index).
+    Commit FINAL garanti (un grain laissé partiel ne serait jamais lisible)."""
+    _i, gi, vw = writer.open_grain(index=in_idx)
+    try:
+        src = np.frombuffer(data, dtype=np.uint8)
+        if src.size < geo["fr_sz"]:
+            vw[:src.size] = src        # frame courte (défensif) : copie pleine, pas de bandes
+            return
+        a = 0
+        for k in range(1, geo["total"] + 1):
+            a = _copy_band(vw, src, a, min(geo["h"], k * geo["sh"]), geo)
+            if k < geo["total"]:
+                writer.commit(gi, valid_slices=k)   # réveille l'aval à chaque bande
+    finally:
+        writer.commit(gi, valid_slices=None)
+
+
+def _open_out_sliced(reader, out_name):
+    """MODE TRANCHE — crée le Writer de sortie depuis le format du flux d'entrée (mêmes
+    arguments champ-natif que le chemin historique). Sortie ÉLIGIBLE (progressif + hauteur
+    divisible) → le flowDef porte slice_height ; sinon geo["sh"]=0 = repli whole-frame
+    (chemin historique), loggé. Renvoie (writer, geo) ou (None, None) si flux absent."""
+    f = reader.format()
+    if not f:
+        return None, None
+    il = f.get("interlace_mode", "progressive")
+    cw, ch = _CHROMA_DIV.get(f.get("chroma") or "422", (2, 1))
+    w = int(f["width"]); gh = int(f["height"])           # dims de GRAIN (champ si entrelacé)
+    sh = _out_slice_h(gh, ch) if not il.startswith("interlaced") else 0
+    if not sh:
+        print("slice_mode : %s inéligible (%s %dx%d) → chemin historique" % (out_name, il, w, gh))
+    writer = bobimxl.Writer(_mxl_inst, out_name, w, f.get("frame_height", gh), f["chroma"],
+                            f["bit_depth"], f.get("frame_fps_num", f["fps_num"]), f["fps_den"],
+                            index_mode="free", interlace=il,
+                            **({{"slice_height": sh}} if sh else {{}}))
+    bps = 2 if int(f["bit_depth"]) >= 10 else 1
+    uv_w = w // cw; uv_h = gh // ch
+    y_sz = w * gh * bps; uv_sz = uv_w * uv_h * bps
+    geo = dict(sh=sh, w=w, h=gh, ch=ch, y_row=w * bps, y_sz=y_sz,
+               uv_row=uv_w * bps, uv_sz=uv_sz, fr_sz=y_sz + 2 * uv_sz,
+               total=(gh // sh if sh else 1),
+               period_s=f["fps_den"] / max(1, f["fps_num"]))
+    return writer, geo
+
+
 def _worker_video(idx):
     """Retard VIDÉO sur MXL : lit le flux d'entrée (Reader), rattrape sans drop via get(index)
-    pour un retard exact, et ré-émet décalé de D images via un Writer. Audio = _worker (legacy)."""
+    pour un retard exact, et ré-émet décalé de D images via un Writer. Audio = _worker (legacy).
+    MODE TRANCHE : branche dédiée en tête de boucle (cf. en-tête) — le chemin historique
+    ci-dessous reste octet-identique et n'est emprunté que si slice_mode off / canal inéligible."""
     out_name = "%s_%d" % (HOSTNAME, idx)
     reader = None; in_name = None; writer = None
     buf = deque(); last_in_idx = -1; prev_ts = 0; out_idx = 0
+    geo = None                       # géométrie sortie (MODE TRANCHE) ; None = pas encore lue
+    last_fresh_ns = time.time_ns()   # dernier grain frais (watchdog stale du suivi de tête)
     fps_t0 = time.time(); fps_n = 0
     while True:
         if bus_error.is_set():
             for h in (reader, writer):
                 try: h and h.close()
                 except Exception: pass
-            reader = writer = None; in_name = None; buf.clear(); last_in_idx = -1
+            reader = writer = None; geo = None; in_name = None; buf.clear(); last_in_idx = -1
             time.sleep(0.5)
         with state_lock:
             wanted = state["inputs_v"][idx]; D = state["delays"][idx]
@@ -387,6 +501,165 @@ def _worker_video(idx):
             try: reader.close()
             except Exception: pass
             reader = None; time.sleep(0.02); continue
+
+        # ─── MODE TRANCHE : branche dédiée (regimes D==0 suivi / D≥1 re-tranchage) ───
+        if SLICE_MODE and writer is None:
+            # Éligibilité lue du flow_def (dispo dès l'existence du flux, AVANT la 1ʳᵉ trame —
+            # le suivi de tête D==0 en dépend). Échec (flux/format pas prêts) → poll.
+            try:
+                writer, geo = _open_out_sliced(reader, out_name)
+            except Exception:
+                writer, geo = None, None
+            if geo is not None and geo["sh"]:
+                _slice_active[0] = True
+                last_fresh_ns = time.time_ns()
+                print("v[%d] slice_mode actif : sortie %s tranchée par %d lignes (%d tranches)"
+                      % (idx, out_name, geo["sh"], geo["total"]))
+        if SLICE_MODE and geo is not None and geo["sh"]:
+            if head == bobimxl.MXL_UNDEFINED_INDEX or head <= 0:
+                time.sleep(POLL_V); continue
+            if head - 1 < last_in_idx - 1:
+                # Producteur recréé (index reparti en arrière) — tolérance 1 : en suivi de tête
+                # last_in_idx = head (grain en cours), le dernier COMMITÉ vaut head-1.
+                buf.clear(); last_in_idx = -1
+            emitted = 0
+            if D <= 0 and not buf:
+                # ── D == 0 : SUIVRE le grain de TÊTE par tranche (pattern UDC _worker_slices) ──
+                if head == last_in_idx:
+                    # Watchdog : source figée trop longtemps → rouvrir le Reader (shm recréé
+                    # sous le même nom). GC ENTRE close et reopen (parade générique du piège
+                    # des générations, motif pyramide) : sans GC le flux périmé reste résolvable
+                    # par nom et le reopen retombe sur L'ORPHELIN → gel permanent.
+                    if (time.time_ns() - last_fresh_ns) > _STALE_REOPEN_NS:
+                        try: reader.close()
+                        except Exception: pass
+                        try: _mxl_inst.garbage_collect()
+                        except Exception: pass
+                        try:
+                            reader = bobimxl.Reader(_mxl_inst, in_name)
+                        except Exception:
+                            reader = None; in_name = None
+                        last_fresh_ns = time.time_ns()
+                        if reader is None:
+                            time.sleep(0.02); continue
+                    time.sleep(0.002); continue
+                # 1ʳᵉ tranche du grain de tête ; pas encore là (tête à peine réclamée) ou flux
+                # sans le patch slices → repli get_latest (grain complet, boucle dégénérée).
+                got = reader.get_slice(head, 1, timeout_ns=2_000_000)
+                if got is None:
+                    got = reader.get_latest()
+                if got is None or got[0] == last_in_idx:
+                    time.sleep(0.002); continue
+                gidx, gi_s, sview = got     # vue ZÉRO-COPIE (jamais lue au-delà du valide)
+                last_fresh_ns = time.time_ns()
+                t0_ns = time.time_ns()
+                total = max(1, int(gi_s.totalSlices or 1))
+                islh  = max(1, geo["h"] // total)   # lignes source par tranche (égales)
+                valid = max(1, int(gi_s.validSlices or 1))
+                # Budget d'attente TOTAL ≈ 1,5 période : une source en retard ne bloque jamais
+                # la sortie au-delà d'une demi-trame après le nominal.
+                deadl = time.monotonic_ns() + int(1.5e9 * geo["period_s"])
+                wait_ns = 0   # cumul des ATTENTES get_slice — EXCLUES de own/delay_ms
+                try:
+                    _i, gi_o, vw = writer.open_grain(index=gidx)   # index d'entrée propagé
+                    written = 0; k_done = 0
+                    try:
+                        for j in range(1, total + 1):
+                            if j > valid:
+                                left = deadl - time.monotonic_ns()
+                                _w0 = time.monotonic_ns()
+                                g = (reader.get_slice(gidx, j, timeout_ns=max(1, left))
+                                     if left > 0 else None)
+                                wait_ns += time.monotonic_ns() - _w0
+                                if g is not None:
+                                    valid = max(j, int(g[1].validSlices or j))
+                                else:
+                                    # Budget épuisé / producteur en retard → REPLI : compléter
+                                    # depuis le grain COMPLET précédent (léger tearing d'UNE
+                                    # image) si dispo, sinon les lignes déjà écrites restent.
+                                    # Le commit FINAL est garanti par le finally.
+                                    gp = (reader.get(gidx - 1, timeout_ns=2_000_000)
+                                          if gidx > 0 else None)
+                                    if gp is not None and gp[2].size >= geo["fr_sz"]:
+                                        written = _copy_band(vw, gp[2], written, geo["h"], geo)
+                                    break
+                            # Tranche source j dispo : lignes [0, sr) valides sur les 3 plans
+                            # → copie IDENTITÉ du delta, bornée au multiple de lignes chroma.
+                            sr = min(geo["h"], j * islh); sr -= sr % geo["ch"]
+                            written = _copy_band(vw, sview, written, sr, geo)
+                            if j < total and written // geo["sh"] > k_done:
+                                k_done = written // geo["sh"]
+                                writer.commit(gi_o, valid_slices=k_done)   # réveille l'aval
+                    finally:
+                        # Commit FINAL TOUJOURS (un grain laissé partiel ne serait jamais
+                        # lisible par un consommateur whole-frame).
+                        writer.commit(gi_o, valid_slices=None)
+                except Exception:
+                    try: writer.close()
+                    except Exception: pass
+                    writer = None; geo = None
+                    time.sleep(0.002); continue
+                out_idx += 1; fps_n += 1; emitted = 1
+                ts_in = reader.last_write_time()
+                with meas_lock:
+                    if prev_ts and ts_in > prev_ts and last_in_idx >= 0:
+                        meas["v"][idx]["period"].push(
+                            (ts_in - prev_ts) / 1e6 / max(1, gidx - last_in_idx))
+                    meas["v"][idx]["transit"].push((bobimxl.now_tai() - ts_in) / 1e6)
+                    # own = travail de COPIE, SANS les attentes get_slice (suivi du fil ≈
+                    # période — même contrat que pyramide/udc) ; à D == 0 le « retard
+                    # réalisé » du canal, c'est ce travail-là (~1 ms).
+                    meas["v"][idx]["ms"].push((time.time_ns() - t0_ns - wait_ns) / 1e6)
+                    meas["v"][idx]["realized"] = 0
+                prev_ts = ts_in; last_in_idx = gidx
+            else:
+                # ── D ≥ 1 (ou tampon résiduel à purger) : le grain source à ré-émettre est
+                # DÉJÀ COMPLET (aucune attente par bande n'a de sens) → rattrapage tamponné
+                # IDENTIQUE à l'historique, mais émission RE-TRANCHÉE (_emit_frame_sliced).
+                cur_idx = head - 1     # dernier grain COMPLET garanti (la tête peut être partielle)
+                if cur_idx > 0 and cur_idx > last_in_idx:
+                    ts_in = reader.last_write_time()
+                    advance = (cur_idx - last_in_idx) if last_in_idx >= 0 else 1
+                    with meas_lock: pv = meas["v"][idx]["period"].avg()
+                    est_ms = pv if (pv and pv > 0) else 40.0
+                    start = (last_in_idx + 1) if last_in_idx >= 0 else cur_idx
+                    if cur_idx - start + 1 > V_RING_SIZE:  # bornage à l'historique du flux
+                        start = cur_idx - V_RING_SIZE + 1
+                    for fi in range(start, cur_idx + 1):
+                        got = reader.get(fi, 20_000_000)   # rattrapage sans drop
+                        if got is None:
+                            continue                       # grain hors historique → sauté
+                        ts_est = ts_in - int((cur_idx - fi) * est_ms * 1e6)
+                        buf.append((bytes(got[2]), ts_est, fi))
+                    with meas_lock:
+                        if prev_ts and ts_in > prev_ts:
+                            meas["v"][idx]["period"].push((ts_in - prev_ts) / 1e6 / max(1, advance))
+                        meas["v"][idx]["transit"].push((bobimxl.now_tai() - ts_in) / 1e6)
+                    prev_ts = ts_in; last_in_idx = cur_idx
+                    last_fresh_ns = time.time_ns()
+                # Flush HORS du bloc « nouvelle frame » : une baisse de D à chaud purge sans
+                # attendre la trame suivante (amélioration propre à la branche tranche).
+                while writer is not None and len(buf) > max(0, D):
+                    data, ts_orig, in_i = buf.popleft()
+                    try:
+                        _emit_frame_sliced(writer, geo, in_i, data)
+                    except Exception:
+                        try: writer.close()
+                        except Exception: pass
+                        writer = None; geo = None; break
+                    out_idx += 1; fps_n += 1; emitted += 1
+                    with meas_lock:
+                        meas["v"][idx]["ms"].push((bobimxl.now_tai() - ts_orig) / 1e6)
+                        meas["v"][idx]["realized"] = len(buf)
+            now = time.time()
+            if now - fps_t0 >= 1.0:
+                with meas_lock:
+                    meas["v"][idx]["fps"] = round(fps_n / (now - fps_t0), 1)
+                    meas["v"][idx]["frame_index"] = out_idx
+                fps_t0 = now; fps_n = 0
+            time.sleep(0.002 if emitted else POLL_V)
+            continue
+
         if head == bobimxl.MXL_UNDEFINED_INDEX or head <= 0:
             time.sleep(POLL_V); continue
         cur_idx = head - 1     # head = grain EN COURS d'écriture → dernier COMMITÉ = head-1
