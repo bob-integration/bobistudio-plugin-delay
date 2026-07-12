@@ -1,7 +1,10 @@
 {
-  "version": "0.7.0",
-  "date": "2026-07-11",
+  "version": "0.7.1",
+  "date": "2026-07-12",
   "changes": {
+    "Réglages mode tranche (0.7.1)": [
+      "Exposition des réglages du mode tranche dans le panneau ⚙ Réglages et la palette (config_schema, scope system) : slice_mode, slice_lines. Schéma/UI seulement — aucun changement de comportement du script."
+    ],
     "Mode tranche MXL (0.7.0)": [
       "MODE TRANCHE (slice_mode, chantier latence sous-trame) : à délai nul, la vidéo SUIT le grain de tête de la source par tranches (pattern UDC : get_slice, budget 1,5×période, repli grain complet, commit final toujours) ; à délai ≥ 1 image, le grain retardé (déjà complet) est republié bande par bande avec commit progressif à l'index propagé — l'aval en tranche conserve le bénéfice sous-trame à travers l'étage délai (coût ~nul). Bandes alignées lignes chroma (420) ; watchdog stale 0,5 s avec GC entre close/reopen ; own_latency_ms hors attentes. Mesuré live dl360-1 : D=0 étage +0,80 ms (30 tranches) ; D=2 retard exact, sortie re-tranchée. Défaut OFF = octet-identique."
     ],

@@ -8,7 +8,7 @@
     "class": "mode-corrector",
     "oklch": "0.80 0.05 110"
   },
-  "version": "0.7.0",
+  "version": "0.7.1",
   "adapts_input": true,
   "description": "Ligne à retard N→N : X entrées vidéo/audio retardées de D images vers X sorties correspondantes. Délai global ou par canal, réglé en images, piloté à chaud (page Traitements). Vidéo seul (défaut), vidéo + audio, ou audio seul.",
   "nav": {
@@ -75,6 +75,27 @@
       "max": 10000,
       "default": 0,
       "scope": "user"
+    },
+    {
+      "key": "slice_mode",
+      "type": "checkbox",
+      "label": "Mode tranche (latence sous-image)",
+      "help": "La vidéo est publiée bande par bande sur le bus MXL : l'aval démarre sur la première bande sans attendre l'image complète (latence sous-image). Entrelacé ou hauteur non divisible → repli image entière. Désactivé (défaut) = comportement historique. À délai nul : suit le grain de tête de la source ; à délai ≥ 1 image : republie le grain retardé bande par bande.",
+      "default": false,
+      "scope": "system"
+    },
+    {
+      "key": "slice_lines",
+      "type": "number",
+      "label": "Lignes par tranche",
+      "help": "Hauteur des bandes (lignes). Doit être un diviseur de la hauteur d'image (36 pour 1080p) — sinon repli image entière.",
+      "min": 4,
+      "max": 540,
+      "default": 36,
+      "scope": "system",
+      "visible_if": {
+        "slice_mode": true
+      }
     }
   ],
   "wiring": {
