@@ -218,6 +218,10 @@ class ControlHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
+        if self.path == "/channels":
+            # Liste des canaux pour le sélecteur d'action « régler le délai d'un canal ».
+            items = [{{"value": i, "label": "Canal %d" % (i + 1)}} for i in range(N_CHANNELS)]
+            return self._reply(200, {{"items": items}})
         if self.path != "/state":
             return self._reply(404, {{"error": "not found"}})
         chans = []

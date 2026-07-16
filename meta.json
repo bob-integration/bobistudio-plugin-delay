@@ -1,7 +1,10 @@
 {
-  "version": "0.7.2",
-  "date": "2026-07-12",
+  "version": "0.7.3",
+  "date": "2026-07-16",
   "changes": {
+    "Sélecteur de canal dans les macros (0.7.3)": [
+      "Nouvel endpoint GET /channels (liste des canaux) → l'action macro « Régler le retard d'un canal » propose désormais un MENU des canaux (Canal 1…N) au lieu d'un numéro à taper. read_endpoints expose /state et /channels. REDÉPLOIEMENT requis (nouvel endpoint dans le conteneur)."
+    ],
     "Masquage UI mode tranche (0.7.2)": [
       "Clés du mode tranche (slice_mode, slice_lines) marquées hidden:true dans le config_schema : plus rendues dans la palette ni le panneau ⚙ — pilotage par le réglage global Réglages → Vidéo « Mode tranche » (slice_mode_global). Les clés restent dans le schéma : coercion, déploiement et API inchangés."
     ],
