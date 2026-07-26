@@ -8,7 +8,7 @@
     "class": "mode-corrector",
     "oklch": "0.80 0.05 110"
   },
-  "version": "0.7.3",
+  "version": "0.8.0",
   "adapts_input": true,
   "description": "Ligne à retard N→N : X entrées vidéo/audio retardées de D images vers X sorties correspondantes. Délai global ou par canal, réglé en images, piloté à chaud (page Traitements). Vidéo seul (défaut), vidéo + audio, ou audio seul.",
   "nav": {
@@ -28,7 +28,8 @@
     "n_channels": 1,
     "mode": "video",
     "max_delay_frames": 25,
-    "delay_frames": 0
+    "delay_frames": 0,
+    "log_level": "info"
   },
   "config_schema": [
     {
@@ -98,6 +99,32 @@
       "visible_if": {
         "slice_mode": true
       }
+    },
+    {
+      "key": "log_level",
+      "type": "select",
+      "label": "Niveau de log",
+      "help": "Verbosité du journal du conteneur. Défaut « Événements » : les faits marquants (démarrage/arrêt, changement de format, reconnexion, repli sur un chemin dégradé, entrée qui apparaît ou disparaît) sont TOUJOURS écrits — après une panne le journal doit permettre de reconstituer l'histoire, et élever le niveau après coup ne récupère rien. Les métriques périodiques (fps, compteurs) ne sont PAS journalisées : elles sont déjà publiées sur :8080. « Détaillé » = lance-flammes par trame, à n'activer que le temps d'un diagnostic (le journal Docker n'est pas roté).",
+      "options": [
+        {
+          "value": "debug",
+          "label": "Détaillé (par trame — diagnostic ponctuel)"
+        },
+        {
+          "value": "info",
+          "label": "Événements (défaut)"
+        },
+        {
+          "value": "warning",
+          "label": "Anomalies seules"
+        },
+        {
+          "value": "error",
+          "label": "Erreurs seules"
+        }
+      ],
+      "default": "info",
+      "scope": "user"
     }
   ],
   "wiring": {

@@ -1,7 +1,11 @@
 {
-  "version": "0.7.3",
-  "date": "2026-07-16",
+  "version": "0.8.0",
+  "date": "2026-07-26",
   "changes": {
+    "Niveau de log par plugin — silencieux par défaut (0.8.0)": [
+      "Nouveau réglage `log_level` (détaillé / événements / anomalies / erreurs, défaut « Événements »). Les impressions du script sont désormais classées ÉVÉNEMENT (démarrage, câblage d’une entrée, changement de format, reconnexion, repli) vs ANOMALIE (`warning`/`error`) : au niveau par défaut le journal raconte l’histoire du conteneur sans bavardage. Aucune métrique périodique n’est journalisée (le fps est publié sur :8080).",
+      "Pas encore d’endpoint /log_level sur ce plugin : le niveau est appliqué au (re)déploiement. Pilotable par macro via l’étape « config » (config_schema)."
+    ],
     "Sélecteur de canal dans les macros (0.7.3)": [
       "Nouvel endpoint GET /channels (liste des canaux) → l'action macro « Régler le retard d'un canal » propose désormais un MENU des canaux (Canal 1…N) au lieu d'un numéro à taper. read_endpoints expose /state et /channels. REDÉPLOIEMENT requis (nouvel endpoint dans le conteneur)."
     ],

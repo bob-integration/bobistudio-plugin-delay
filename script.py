@@ -56,6 +56,51 @@ CONFIG         = {config}
 HOSTNAME       = "{hostname}"
 PLUGIN_VERSION = "{plugin_version}"
 
+# ─── Niveau de log ─────────────────────────────────────────────────────────
+# `log_level` (config_schema du plugin, défaut « info ») filtre les impressions du script.
+# Le critère n'est PAS « verbeux vs silencieux » mais ÉVÉNEMENT vs MÉTRIQUE :
+#   debug   — le lance-flammes : par trame, par bande, décisions internes
+#   info    — ÉVÉNEMENTS rares et signifiants  ← DÉFAUT (toujours visible) : démarrage/
+#             arrêt, session ouverte/fermée, changement de format, reconnexion, repli sur
+#             un chemin dégradé, entrée qui apparaît/disparaît, rebascule.
+#   warning — anomalies et replis subis
+#   error   — échecs
+# RÈGLE 1 : après une panne, le journal PAR DÉFAUT doit permettre de RECONSTITUER
+#   l'histoire. Élever le niveau après coup ne récupère RIEN : ce qui n'a pas été écrit
+#   est perdu. On ne coupe donc pas l'information, on coupe la redondance.
+# RÈGLE 2 : une MÉTRIQUE PÉRIODIQUE (fps, compteurs) ne se journalise PAS — elle est déjà
+#   publiée sur :8080 et échantillonnée par l'orchestrateur. La journaliser duplique la
+#   mesure ET consomme la fenêtre de rétention (journal Docker non roté : le bruit purge
+#   les lignes utiles anciennes). Au mieux `debug`.
+# RÈGLE 3 : un événement qui peut partir EN RAFALE s'AGRÈGE sur une fenêtre et sort en UNE
+#   ligne périodique (« N frames lentes sur la dernière minute, pire … ») — le signal
+#   reste, le spam disparaît.
+# Réglable à chaud, sans redéployer, quand le plugin expose l'endpoint de contrôle :
+# POST :8082/log_level {{"level": "debug"}} (exposé aux macros via param_tree/actions).
+_LOG_ORDER = {{"debug": 10, "info": 20, "warning": 30, "error": 40}}
+LOG_LEVEL = str(CONFIG.get("log_level") or "info").strip().lower()
+if LOG_LEVEL not in _LOG_ORDER:
+    LOG_LEVEL = "info"
+_LOG_MIN = _LOG_ORDER[LOG_LEVEL]
+
+
+def log(msg, niveau="info"):
+    """Impression gatée par le niveau de log courant (défaut du message : « info »)."""
+    if _LOG_ORDER.get(niveau, 20) >= _LOG_MIN:
+        print(msg, flush=True)
+
+
+def set_log_level(niveau):
+    """Change le niveau à chaud. Renvoie True si le niveau est reconnu."""
+    global LOG_LEVEL, _LOG_MIN
+    lv = str(niveau or "").strip().lower()
+    if lv not in _LOG_ORDER:
+        return False
+    LOG_LEVEL, _LOG_MIN = lv, _LOG_ORDER[lv]
+    return True
+
+
+
 N_CHANNELS  = max(1, min(16, int(CONFIG.get("n_channels") or 1)))
 MODE        = CONFIG.get("mode") or "video"
 MAX_DELAY   = max(0, int(CONFIG.get("max_delay_frames") or 25))
@@ -151,7 +196,7 @@ meas = {{
 # SIGBUS : signale aux workers de rouvrir leurs flux MXL
 bus_error = threading.Event()
 def _handle_sigbus(signum, frame):
-    print("SIGBUS reçu — réouverture des flux MXL")
+    log("SIGBUS reçu — réouverture des flux MXL", "warning")
     bus_error.set()
 signal.signal(signal.SIGBUS, _handle_sigbus)
 
@@ -343,7 +388,7 @@ def _worker(essence, idx):
         if wanted and ar is None:
             try:
                 ar = bobimxl.AudioReader(_mxl_inst, wanted); read_pos = None
-                print("a[%d] câblé sur %s" % (idx, wanted))
+                log("a[%d] câblé sur %s" % (idx, wanted), "info")
             except Exception:
                 ar = None
         if ar is None:
@@ -452,7 +497,7 @@ def _open_out_sliced(reader, out_name):
     w = int(f["width"]); gh = int(f["height"])           # dims de GRAIN (champ si entrelacé)
     sh = _out_slice_h(gh, ch) if not il.startswith("interlaced") else 0
     if not sh:
-        print("slice_mode : %s inéligible (%s %dx%d) → chemin historique" % (out_name, il, w, gh))
+        log("slice_mode : %s inéligible (%s %dx%d) → chemin historique" % (out_name, il, w, gh), "warning")
     writer = bobimxl.Writer(_mxl_inst, out_name, w, f.get("frame_height", gh), f["chroma"],
                             f["bit_depth"], f.get("frame_fps_num", f["fps_num"]), f["fps_den"],
                             index_mode="free", interlace=il,
@@ -493,7 +538,7 @@ def _worker_video(idx):
             reader = None; buf.clear(); last_in_idx = -1; in_name = wanted
         if wanted and reader is None:
             try:
-                reader = bobimxl.Reader(_mxl_inst, wanted); print("v[%d] câblé sur %s" % (idx, wanted))
+                reader = bobimxl.Reader(_mxl_inst, wanted); log("v[%d] câblé sur %s" % (idx, wanted), "info")
             except Exception:
                 reader = None
         if reader is None:
@@ -517,8 +562,8 @@ def _worker_video(idx):
             if geo is not None and geo["sh"]:
                 _slice_active[0] = True
                 last_fresh_ns = time.time_ns()
-                print("v[%d] slice_mode actif : sortie %s tranchée par %d lignes (%d tranches)"
-                      % (idx, out_name, geo["sh"], geo["total"]))
+                log("v[%d] slice_mode actif : sortie %s tranchée par %d lignes (%d tranches)"
+                    % (idx, out_name, geo["sh"], geo["total"]), "info")
         if SLICE_MODE and geo is not None and geo["sh"]:
             if head == bobimxl.MXL_UNDEFINED_INDEX or head <= 0:
                 time.sleep(POLL_V); continue
@@ -730,8 +775,8 @@ for i in range(N_CHANNELS):
 for t in threads:
     t.start()
 
-print("delay démarré : %d canaux, mode=%s, délai max=%d %s"
-      % (N_CHANNELS, MODE, MAX_DELAY, "ms" if AUDIO_ONLY else "img"))
+log("delay démarré : %d canaux, mode=%s, délai max=%d %s"
+    % (N_CHANNELS, MODE, MAX_DELAY, "ms" if AUDIO_ONLY else "img"), "info")
 
 # Le thread principal reclear l'Event SIGBUS après laisser le temps aux workers de
 # rouvrir leurs handles, et maintient le process vivant.
