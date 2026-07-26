@@ -294,6 +294,7 @@ class ControlHandler(BaseHTTPRequestHandler):
         self._reply(200, dict(flat, **{{
             "mode": MODE, "n_channels": N_CHANNELS, "max_delay": MAX_DELAY,
             "unit": ("ms" if AUDIO_ONLY else "img"), "link": link, "channels": chans,
+            "log_level": LOG_LEVEL,   # lisible en condition de macro
             "plugin_version": PLUGIN_VERSION,
         }}))
 
@@ -331,6 +332,11 @@ class ControlHandler(BaseHTTPRequestHandler):
                     if essence == "audio": state["inputs_a"][i] = shm
                     else:                  state["inputs_v"][i] = shm
             return self._reply(200, {{"ok": True}})
+        if self.path == "/log_level":
+            # Verbosité À CHAUD (pas de redéploiement) : instruction d'incident. Le niveau
+            # PERSISTANT reste le champ `log_level` du config_schema ; celui-ci est volatil.
+            ok = set_log_level(body.get("level") or body.get("log_level"))
+            return self._reply(200 if ok else 400, {{"ok": ok, "log_level": LOG_LEVEL}})
         return self._reply(404, {{"error": "not found"}})
 
     def log_message(self, *a): pass
