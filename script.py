@@ -425,7 +425,7 @@ def _worker(essence, idx):
         if writer is None:
             try:
                 writer = bobimxl.AudioWriter(_mxl_inst, out_name, channels=A_CHANNELS,
-                                             sample_rate=A_SAMPLE_RATE, index_mode="free")
+                                             sample_rate=A_SAMPLE_RATE)
             except Exception:
                 writer = None
         # émet les blocs dont le retard D (en blocs = ms) est atteint (flush multiple si D a baissé)
@@ -475,7 +475,7 @@ def _emit_frame_sliced(writer, geo, in_idx, data):
     démarre sur la 1ʳᵉ bande au lieu d'attendre la trame. Index source propagé (open_grain
     (index=in_idx), même contrat que l'historique : parité de champ / retard par index).
     Commit FINAL garanti (un grain laissé partiel ne serait jamais lisible)."""
-    _i, gi, vw = writer.open_grain(index=in_idx)
+    _i, gi, vw = writer.open_grain(src_index=in_idx)
     try:
         src = np.frombuffer(data, dtype=np.uint8)
         if src.size < geo["fr_sz"]:
@@ -506,7 +506,7 @@ def _open_out_sliced(reader, out_name):
         log("slice_mode : %s inéligible (%s %dx%d) → chemin historique" % (out_name, il, w, gh), "warning")
     writer = bobimxl.Writer(_mxl_inst, out_name, w, f.get("frame_height", gh), f["chroma"],
                             f["bit_depth"], f.get("frame_fps_num", f["fps_num"]), f["fps_den"],
-                            index_mode="free", interlace=il,
+                            interlace=il,
                             **({{"slice_height": sh}} if sh else {{}}))
     bps = 2 if int(f["bit_depth"]) >= 10 else 1
     uv_w = w // cw; uv_h = gh // ch
@@ -616,7 +616,7 @@ def _worker_video(idx):
                 deadl = time.monotonic_ns() + int(1.5e9 * geo["period_s"])
                 wait_ns = 0   # cumul des ATTENTES get_slice — EXCLUES de own/delay_ms
                 try:
-                    _i, gi_o, vw = writer.open_grain(index=gidx)   # index d'entrée propagé
+                    _i, gi_o, vw = writer.open_grain(src_index=gidx)   # origin timestamp propagé
                     written = 0; k_done = 0
                     try:
                         for j in range(1, total + 1):
@@ -746,12 +746,11 @@ def _worker_video(idx):
                     writer = bobimxl.Writer(_mxl_inst, out_name, f["width"],
                                             f.get("frame_height", f["height"]), f["chroma"],
                                             f["bit_depth"], f.get("frame_fps_num", f["fps_num"]),
-                                            f["fps_den"], index_mode="free",
-                                            interlace=f.get("interlace_mode", "progressive"))
+                                            f["fps_den"], interlace=f.get("interlace_mode", "progressive"))
             while writer is not None and len(buf) > D:
                 data, ts_orig, in_idx = buf.popleft()
                 try:
-                    _i, gi, vw = writer.open_grain(index=in_idx)   # index d'entrée → parité de champ
+                    _i, gi, vw = writer.open_grain(src_index=in_idx)   # index d'entrée → parité de champ
                     vw[:len(data)] = np.frombuffer(data, dtype=np.uint8)
                     writer.commit(gi)
                 except Exception:
