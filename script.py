@@ -38,6 +38,15 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 import numpy as np
 import bobimxl   # migration MXL : retard vidéo (Reader/Writer) + audio (AudioReader/AudioWriter) — Phases 1/3
 
+
+def _mxl_lib_state():
+    """Variante libmxl réellement chargée (baseline / x86-64-v3) — diagnostic seul, ne doit
+    JAMAIS faire échouer /state."""
+    try:
+        return bobimxl.lib_info()
+    except Exception:
+        return None
+
 _mxl_inst = bobimxl.Instance()   # domaine MXL ($MXL_DOMAIN ou /dev/shm/mxl)
 
 # ─── Latence : Δ ts_écriture - ts_origine (rolling avg) ─────
@@ -296,6 +305,7 @@ class ControlHandler(BaseHTTPRequestHandler):
             "unit": ("ms" if AUDIO_ONLY else "img"), "link": link, "channels": chans,
             "log_level": LOG_LEVEL,   # lisible en condition de macro
             "plugin_version": PLUGIN_VERSION,
+            "mxl_lib": _mxl_lib_state(),
         }}))
 
     def do_POST(self):
