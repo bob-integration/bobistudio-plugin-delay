@@ -152,19 +152,22 @@ _STALE_REOPEN_NS = 500_000_000
 _slice_active = [False]
 
 # ─── Format vidéo (yuv420p, taille auto-détectée) ───────────
-V_HEADER_SIZE = 64
+# ⚠ shm_video_ring NE dimensionne PLUS aucun shm maison (entrée/sortie passent par bobimxl/MXL,
+# profondeur = urn:x-mxl:option:history_duration par DOMAINE, cf. réglage de nœud
+# mxl_history_ms — jamais par conteneur). Ici V_RING_SIZE ne borne QUE la fenêtre de rattrapage
+# (reader.get) après un D≥1 : combien de grains en arrière ce canal tente de relire dans
+# l'historique du flux MXL avant d'abandonner (cf. usages ci-dessous). Une valeur trop basse
+# tronque le rattrapage sur un flux à fort delay ; ne PAS augmenter au-delà de l'historique
+# réellement retenu par le nœud (mxl_history_ms / cadence).
 V_RING_SIZE   = CONFIG.get("shm_video_ring", 10)
 
 # ─── Format audio (PCM L24 / 48k / 8ch, identique receiver_2110) ─
 A_SAMPLE_RATE = 48000
 A_CHANNELS    = 8
-A_BIT_DEPTH   = 24
-A_BYTES_PER_SAMPLE  = A_BIT_DEPTH // 8
 A_SAMPLES_PER_CHUNK = A_SAMPLE_RATE // 1000   # 48 (1 ms)
-A_CHUNK_SIZE  = A_SAMPLES_PER_CHUNK * A_CHANNELS * A_BYTES_PER_SAMPLE   # 1152
-A_HEADER_SIZE = 64
-A_RING_SIZE   = CONFIG.get("shm_audio_ring", 100)
-A_TOTAL_SIZE  = A_HEADER_SIZE + A_RING_SIZE * A_CHUNK_SIZE
+# (ex-shm_audio_ring/A_RING_SIZE/A_BIT_DEPTH/A_BYTES_PER_SAMPLE/A_CHUNK_SIZE/A_HEADER_SIZE/
+# A_TOTAL_SIZE : dimensionnaient un ancien shm maison audio ; retiré 2026-08-09, code mort —
+# l'audio passe par bobimxl.AudioWriter, cf. plus bas.)
 
 # ─── État runtime partagé ───────────────────────────────────
 # Reprise des réglages live persistés (hook control_action) : channel_delays/link, sinon
