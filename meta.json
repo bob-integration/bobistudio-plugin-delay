@@ -1,7 +1,13 @@
 {
-  "version": "0.11.1",
-  "date": "2026-08-09",
+  "version": "0.12.0",
+  "date": "2026-08-10",
   "changes": {
+    "La cadence affichée compare à l'INTENTION (0.12.0)": [
+      "`/state` publie `fps_nominal` par canal : la cadence DÉCLARÉE par le flux d'entrée (grains/s — des champs si l'entrée est entrelacée). Un délai est un relais : il n'a pas de cadence propre, l'intention qu'il doit tenir est exactement celle de sa source. Relevé au fil de l'eau et remis à zéro au recâblage.",
+      "L'interface affiche désormais la cadence DEMANDÉE tant qu'elle est tenue (« 50 fps »), et la mesure seulement quand elle s'en écarte (« 43/50 fps », en ton d'avertissement). Motif : le champ `fps` compte des trames entières sur une fenêtre d'une seconde, soit ±1 image de troncature ; on affichait « 49,8 fps » sur un canal parfaitement sain, et un chiffre qui bouge en permanence finit par n'être plus regardé.",
+      "Tolérance = l'incertitude de mesure elle-même, UNE image — pas un pourcentage. Un vrai décrochage est une demie ou un tiers de cadence, jamais une image.",
+      "REDÉPLOIEMENT requis pour que `fps_nominal` apparaisse (le relevé vit dans le script) ; sans lui l'interface retombe sur « ~50 fps », arrondi et sans comparaison."
+    ],
     "Audit shm_video_ring/shm_audio_ring : purge du legacy MXL (0.11.1)": [
       "VIVANT — shm_video_ring borne le rattrapage MXL (reader.get) ; shm_audio_ring mort retiré"
     ],

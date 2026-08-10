@@ -201,7 +201,7 @@ state = {{
 # le délai (en images) en chunks audio sans fps configuré.
 meas_lock = threading.Lock()
 meas = {{
-    "v": [{{"fps": 0.0, "frame_index": 0, "ms": RollingMs(), "realized": 0, "period": RollingMs(), "transit": RollingMs()}} for _ in range(N_CHANNELS)],
+    "v": [{{"fps": 0.0, "nominal": 0.0, "frame_index": 0, "ms": RollingMs(), "realized": 0, "period": RollingMs(), "transit": RollingMs()}} for _ in range(N_CHANNELS)],
     "a": [{{"fps": 0.0, "frame_index": 0, "ms": RollingMs(), "realized": 0, "transit": RollingMs()}} for _ in range(N_CHANNELS)],
 }}
 
@@ -293,6 +293,10 @@ class ControlHandler(BaseHTTPRequestHandler):
                     "measured_ms": (mv["ms"].avg() if HAS_VIDEO else ma["ms"].avg()),
                     "realized_frames": (mv["realized"] if HAS_VIDEO else ma["realized"]),
                     "fps": (mv["fps"] if HAS_VIDEO else ma["fps"]),
+                    # Cadence DEMANDÉE (celle du flux d'entrée — un relais n'en a pas d'autre).
+                    # 0 = inconnue. L'interface s'en sert pour n'afficher la mesure que lorsqu'elle
+                    # s'écarte de l'intention ; sans elle, elle ne peut qu'afficher un chiffre nu.
+                    "fps_nominal": (mv["nominal"] if HAS_VIDEO else 0.0),
                 }})
             link = state["link"]
             # Expose les shm câblés au NIVEAU RACINE sous le nom de leur state_field
@@ -531,6 +535,29 @@ def _open_out_sliced(reader, out_name):
     return writer, geo
 
 
+def _releve_nominal(idx, reader):
+    """Cadence NOMINALE du canal = celle DÉCLARÉE par le flux d'entrée (grains/s : des champs si
+    l'entrée est entrelacée). Le délai est un relais : il n'a pas de cadence propre, l'intention
+    qu'il doit tenir est exactement celle de sa source.
+
+    Sans cette valeur, l'interface ne peut afficher que la mesure brute — laquelle porte ±1 image
+    de troncature de fenêtre et présente donc « 49,8 fps » à un canal parfaitement sain. Un chiffre
+    qui bouge en permanence cesse d'être lu ; on ne l'affiche que lorsqu'il informe.
+    Relevé une seule fois par câblage (remis à 0 au changement d'entrée), au fil de l'eau : le
+    format n'est pas forcément lisible à l'instant où le Reader s'ouvre."""
+    with meas_lock:
+        if meas["v"][idx]["nominal"] > 0:
+            return
+    try:
+        f = reader.format()
+        n = float(f["fps_num"]) / max(1.0, float(f["fps_den"])) if f else 0.0
+    except Exception:
+        n = 0.0
+    if n > 0:
+        with meas_lock:
+            meas["v"][idx]["nominal"] = round(n, 3)
+
+
 def _worker_video(idx):
     """Retard VIDÉO sur MXL : lit le flux d'entrée (Reader), rattrape sans drop via get(index)
     pour un retard exact, et ré-émet décalé de D images via un Writer. Audio = _worker (legacy).
@@ -555,6 +582,7 @@ def _worker_video(idx):
             try: reader and reader.close()
             except Exception: pass
             reader = None; buf.clear(); last_in_idx = -1; in_name = wanted
+            with meas_lock: meas["v"][idx]["nominal"] = 0.0   # autre source = autre intention
         if wanted and reader is None:
             try:
                 reader = bobimxl.Reader(_mxl_inst, wanted); log("v[%d] câblé sur %s" % (idx, wanted), "info")
@@ -721,6 +749,7 @@ def _worker_video(idx):
                         meas["v"][idx]["realized"] = len(buf)
             now = time.time()
             if now - fps_t0 >= 1.0:
+                _releve_nominal(idx, reader)
                 with meas_lock:
                     meas["v"][idx]["fps"] = round(fps_n / (now - fps_t0), 1)
                     meas["v"][idx]["frame_index"] = out_idx
@@ -776,6 +805,7 @@ def _worker_video(idx):
                     meas["v"][idx]["realized"] = len(buf)
         now = time.time()
         if now - fps_t0 >= 1.0:
+            _releve_nominal(idx, reader)
             with meas_lock:
                 meas["v"][idx]["fps"] = round(fps_n / (now - fps_t0), 1)
                 meas["v"][idx]["frame_index"] = out_idx

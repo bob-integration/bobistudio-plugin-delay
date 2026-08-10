@@ -112,12 +112,24 @@ window.MXLPlugins.delay = (function () {
         wire();
     }
 
+    // Cadence d'un canal : on affiche l'INTENTION tant qu'elle est tenue, la mesure sinon.
+    // La mesure vaut ±1 image (comptage de trames sur une fenêtre d'une seconde) : afficher
+    // « 49,8 fps » sur un canal sain invente un défaut, et un chiffre qui bouge en permanence
+    // n'est bientôt plus lu. La tolérance retenue EST l'incertitude de mesure — une image, pas
+    // un pourcentage : un vrai décrochage est un demi-tiers de cadence, jamais une image.
+    function fpsHtml(c) {
+        const n = c.fps_nominal || 0;
+        if (n > 0 && c.fps >= n - 1) return Math.round(n) + ' fps';
+        if (n > 0)                   return `<span class="dl-fps-bas">${c.fps}/${Math.round(n)} fps</span>`;
+        return '~' + Math.round(c.fps) + ' fps';
+    }
+
     function realHtml(c) {
         const ms = fmtMs(c.measured_ms);
         const rf = (c.realized_frames != null) ? `${c.realized_frames} ${unitShort()}` : '—';
         const live = (c.fps && c.fps > 0);
         return `<span class="dl-real-dot ${live ? 'on' : 'off'}"></span>`
-             + `<strong>${ms}</strong> <span class="meta">(${rf}${live ? ' · ' + c.fps + ' fps' : ' · inactif'})</span>`;
+             + `<strong>${ms}</strong> <span class="meta">(${rf}${live ? ' · ' + fpsHtml(c) : ' · inactif'})</span>`;
     }
 
     // ─── Mise à jour live (sans reconstruire le DOM) ────────
