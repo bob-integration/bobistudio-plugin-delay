@@ -192,8 +192,8 @@ state_lock = threading.Lock()
 state = {{
     "delays":   _boot_delays,                # consigne par canal, en IMAGES
     "link":     _boot_link,                  # délai global (les canaux suivent)
-    "inputs_v": [(CONFIG.get("input_v_%d" % i) or None) for i in range(N_CHANNELS)],
-    "inputs_a": [(CONFIG.get("input_a_%d" % i) or None) for i in range(N_CHANNELS)],
+    "inputs_v": [(CONFIG.get("input_v_%d" % (i + 1)) or None) for i in range(N_CHANNELS)],
+    "inputs_a": [(CONFIG.get("input_a_%d" % (i + 1)) or None) for i in range(N_CHANNELS)],
 }}
 
 # Mesures par canal/essence (remplies par les workers). `period` = période entre frames
@@ -305,8 +305,8 @@ class ControlHandler(BaseHTTPRequestHandler):
             # débranchées et aucun câble ne s'affiche.
             flat = {{}}
             for i in range(N_CHANNELS):
-                if HAS_VIDEO: flat["input_v_%d" % i] = state["inputs_v"][i]
-                if HAS_AUDIO: flat["input_a_%d" % i] = state["inputs_a"][i]
+                if HAS_VIDEO: flat["input_v_%d" % (i + 1)] = state["inputs_v"][i]
+                if HAS_AUDIO: flat["input_a_%d" % (i + 1)] = state["inputs_a"][i]
         self._reply(200, dict(flat, **{{
             "mode": MODE, "n_channels": N_CHANNELS, "max_delay": MAX_DELAY,
             "unit": ("ms" if AUDIO_ONLY else "img"), "link": link, "channels": chans,
@@ -370,7 +370,7 @@ def _worker(essence, idx):
     """Retard AUDIO d'un canal : lit le FLUX MXL d'entrée (gapless, blocs de 1 ms), tamponne D blocs
     (1 bloc = 1 ms) puis ré-émet dans le flux MXL de sortie. (La vidéo a son propre _worker_video.)
     `essence` vaut toujours 'a' (appelé ainsi). Migration MXL Phase 3 : plus de ring shm s24be."""
-    out_name = "%s_audio_%d" % (HOSTNAME, idx)
+    out_name = "%s_audio_%d" % (HOSTNAME, idx + 1)
     ar = None; in_name = None; writer = None
     buf = deque()              # (bloc float32 (n,8), t_read_ns)
     read_pos = None            # index sample consommé (lecture gapless)
@@ -563,7 +563,7 @@ def _worker_video(idx):
     pour un retard exact, et ré-émet décalé de D images via un Writer. Audio = _worker (legacy).
     MODE TRANCHE : branche dédiée en tête de boucle (cf. en-tête) — le chemin historique
     ci-dessous reste octet-identique et n'est emprunté que si slice_mode off / canal inéligible."""
-    out_name = "%s_%d" % (HOSTNAME, idx)
+    out_name = "%s_%d" % (HOSTNAME, idx + 1)
     reader = None; in_name = None; writer = None
     buf = deque(); last_in_idx = -1; prev_ts = 0; out_idx = 0
     geo = None                       # géométrie sortie (MODE TRANCHE) ; None = pas encore lue
