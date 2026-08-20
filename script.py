@@ -236,6 +236,11 @@ class MetricsHandler(BaseHTTPRequestHandler):
                                 "frame_index": m["frame_index"],
                                 "delay_frames": state["delays"][i],
                                 "delay_ms": m["ms"].avg()}})
+            # Lu SOUS state_lock, comme les `delay_frames` ci-dessus : le handler de contrôle
+            # modifie `state["delays"]` à chaud. La 1re rédaction lisait hors verrou, en
+            # contradiction avec la convention du fichier trois lignes plus haut.
+            _dl = [int(d) for d in state["delays"][:N_CHANNELS] if d is not None]
+        _dmax = max(_dl) if _dl else None
         # inputs_latency_ms = TRANSIT (âge à la lecture) ; own_latency_ms = délai PROPRE ajouté
         # (réalisé), c.-à-d. le rôle même du nœud. Distinguer les deux pour le suivi de chaîne.
         ilm = {{}}; own_vals = []
@@ -249,8 +254,23 @@ class MetricsHandler(BaseHTTPRequestHandler):
                 if ov is not None:
                     own_vals.append(ov)
         own_latency_ms = round(max(own_vals), 1) if own_vals else None
+        # DÉLAI D'ÉTAGE en TRAMES, pour la page Câbles. Ce module-ci n'a rien à MESURER : retarder
+        # est son métier, et il connaît exactement de combien. On ne passe donc PAS par
+        # bobimxl.StageDelay, qui déduit le délai de l'écart d'index — et qui rendrait 0 ici,
+        # puisque le grain de sortie PROPAGE la coordonnée source (open_grain(src_index=)) : le
+        # contenu part avec son horodatage d'origine, simplement N trames plus tard. Publier 0
+        # pour le seul module dont la fonction est d'ajouter du délai serait le plus grossier des
+        # échecs silencieux. On retient le PIRE canal : c'est lui qui décrit la chaîne.
+        # Cf. docs/reference/LATENCE_CHAINE.md.
         payload = {{"channels": out, "inputs_latency_ms": ilm,
                     "own_latency_ms": own_latency_ms, "slice_mode": _slice_active[0],
+                    "delai_etage_trames": (None if _dmax is None else
+                                           {{"recent_moy": float(_dmax), "recent_max": float(_dmax),
+                                             "vieux_moy": float(_dmax), "vieux_max": float(_dmax),
+                                             # 0 par construction : ce module ne MESURE pas, il
+                                             # sait. Présent quand même pour que le contrat de
+                                             # `delai_etage_trames` soit le même partout.
+                                             "propage": False, "non_mesurable": 0}}),
                     "plugin_version": PLUGIN_VERSION}}
         body = json.dumps(payload).encode()
         self.send_response(200)
