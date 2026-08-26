@@ -1,0 +1,15 @@
+{
+  "plugin.delay.col_channel": "Canal",
+  "plugin.delay.col_delay": "Délai",
+  "plugin.delay.col_real": "Délai réel mesuré",
+  "plugin.delay.err_set": "Réglage : ",
+  "plugin.delay.error": "Erreur : {msg}",
+  "plugin.delay.global": "Délai global",
+  "plugin.delay.head": "{n} canal(aux) · délai max {max} {unit} · {note}",
+  "plugin.delay.init": "Initialisation du délai…",
+  "plugin.delay.link": "🔗 Lier les canaux",
+  "plugin.delay.note_fps": "fps auto-détecté",
+  "plugin.delay.note_ms": "délai en millisecondes",
+  "plugin.delay.unit_frames": "img",
+  "plugin.delay.unit_frames_long": "images"
+}

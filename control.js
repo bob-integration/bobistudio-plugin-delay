@@ -8,6 +8,13 @@
 window.MXLPlugins = window.MXLPlugins || {};
 window.MXLPlugins.delay = (function () {
     let EL = null, VMID = null, TOAST = () => {};
+
+    /* i18n (catalogue plugin.delay.*). `window.t` rend la CLÉ BRUTE si elle manque : on teste le
+     * retour et on retombe sur le français passé en 2e argument. */
+    const T = (k, repli) => {
+        const v = window.t ? window.t(k) : k;
+        return (v && v !== k) ? v : (repli !== undefined ? repli : k);
+    };
     let state = null;
     let pollTimer = null;
     let editing = null;   // {kind:'global'|'channel', i} en cours d'édition (anti-écrasement par le poll)
@@ -33,7 +40,7 @@ window.MXLPlugins.delay = (function () {
             if (fullRebuild || !$('.dl-wrap')) render();
             else updateLive();
         } catch (e) {
-            EL.innerHTML = `<div class="dl-error">Erreur : ${esc(e.message)}</div>`;
+            EL.innerHTML = `<div class="dl-error">${esc(T('plugin.delay.error', 'Erreur : {msg}').replace('{msg}', e.message))}</div>`;
         }
     }
 
@@ -47,7 +54,7 @@ window.MXLPlugins.delay = (function () {
                 body: JSON.stringify(body || {}),
             });
             if (!r.ok) throw new Error('HTTP ' + r.status);
-        } catch (e) { TOAST('Réglage : ' + e.message, 'error'); }
+        } catch (e) { TOAST(T('plugin.delay.err_set', 'Réglage : ') + e.message, 'error'); }
     }
 
     function fmtMs(v) {
@@ -55,8 +62,8 @@ window.MXLPlugins.delay = (function () {
         return v >= 1000 ? (v / 1000).toFixed(2) + ' s' : Math.round(v) + ' ms';
     }
     // Unité du délai selon le mode : images (vidéo) ou millisecondes (audio seul).
-    function unitLong() { return (state && state.unit === 'ms') ? 'ms' : 'images'; }
-    function unitShort() { return (state && state.unit === 'ms') ? 'ms' : 'img'; }
+    function unitLong() { return (state && state.unit === 'ms') ? 'ms' : T('plugin.delay.unit_frames_long', 'images'); }
+    function unitShort() { return (state && state.unit === 'ms') ? 'ms' : T('plugin.delay.unit_frames', 'img'); }
 
     // ─── Rendu complet ──────────────────────────────────────
     function render() {
@@ -65,16 +72,19 @@ window.MXLPlugins.delay = (function () {
         const link = !!state.link;
         const globalD = chans.length ? chans[0].delay_frames : 0;
 
-        const note = (state.unit === 'ms') ? 'délai en millisecondes' : 'fps auto-détecté';
+        const note = (state.unit === 'ms') ? T('plugin.delay.note_ms', 'délai en millisecondes')
+                                           : T('plugin.delay.note_fps', 'fps auto-détecté');
         const head = `
           <div class="dl-head">
             <span class="dl-badge">${esc(state.mode)}</span>
-            <span class="meta">${chans.length} canal${chans.length > 1 ? 'aux' : ''} · délai max ${state.max_delay} ${unitShort()} · ${note}</span>
+            <span class="meta">${esc(T('plugin.delay.head', '{n} canal(aux) · délai max {max} {unit} · {note}')
+                .replace('{n}', chans.length).replace('{max}', state.max_delay)
+                .replace('{unit}', unitShort()).replace('{note}', note))}</span>
           </div>`;
 
         const globalRow = `
           <div class="dl-global">
-            <label class="dl-global-label">Délai global</label>
+            <label class="dl-global-label">${esc(T('plugin.delay.global', 'Délai global'))}</label>
             <input type="number" class="dl-num dl-global-num" min="0" max="${state.max_delay}" step="1"
                    value="${globalD}" ${link ? '' : 'disabled'}
                    data-role="global">
@@ -82,7 +92,7 @@ window.MXLPlugins.delay = (function () {
             <span class="dl-spacer"></span>
             <label class="dl-link">
               <input type="checkbox" ${link ? 'checked' : ''} data-role="link">
-              <span>🔗 Lier les canaux</span>
+              <span>${esc(T('plugin.delay.link', '🔗 Lier les canaux'))}</span>
             </label>
           </div>`;
 
@@ -104,7 +114,7 @@ window.MXLPlugins.delay = (function () {
             ${head}
             ${globalRow}
             <div class="dl-rows-head">
-              <span>Canal</span><span></span><span>Délai</span><span></span><span>Délai réel mesuré</span>
+              <span>${esc(T('plugin.delay.col_channel', 'Canal'))}</span><span></span><span>${esc(T('plugin.delay.col_delay', 'Délai'))}</span><span></span><span>${esc(T('plugin.delay.col_real', 'Délai réel mesuré'))}</span>
             </div>
             <div class="dl-rows">${rows}</div>
           </div>`;
@@ -189,6 +199,13 @@ window.MXLPlugins.delay = (function () {
         if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
         EL = el; VMID = vmid; TOAST = (ctx && ctx.toast) || (() => {});
         state = null; editing = null;
+        // Le fragment statique porte le français en dur + data-i18n : on le traduit AVANT le premier
+        // rendu, sinon l'exploitant voit « Initialisation du délai… » en français une fraction de
+        // seconde sur une interface anglaise.
+        if (window.t) el.querySelectorAll('[data-i18n]').forEach(n => {
+            const v = window.t(n.dataset.i18n);
+            if (v && v !== n.dataset.i18n) n.textContent = v;
+        });
         refreshState({ fullRebuild: true });
         pollTimer = setInterval(() => refreshState({ fullRebuild: false }), 1000);
     }

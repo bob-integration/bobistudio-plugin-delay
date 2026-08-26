@@ -1,0 +1,15 @@
+{
+  "plugin.delay.col_channel": "Channel",
+  "plugin.delay.col_delay": "Delay",
+  "plugin.delay.col_real": "Measured actual delay",
+  "plugin.delay.err_set": "Setting: ",
+  "plugin.delay.error": "Error: {msg}",
+  "plugin.delay.global": "Global delay",
+  "plugin.delay.head": "{n} channel(s) · max delay {max} {unit} · {note}",
+  "plugin.delay.init": "Initialising the delay…",
+  "plugin.delay.link": "🔗 Link the channels",
+  "plugin.delay.note_fps": "auto-detected fps",
+  "plugin.delay.note_ms": "delay in milliseconds",
+  "plugin.delay.unit_frames": "fr",
+  "plugin.delay.unit_frames_long": "frames"
+}
