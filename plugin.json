@@ -11,12 +11,7 @@
   "version": "0.14.0",
   "adapts_input": true,
   "description": "Ligne à retard N→N : X entrées vidéo/audio retardées de D images vers X sorties correspondantes. Délai global ou par canal, réglé en images, piloté à chaud (page Traitements). Vidéo seul (défaut), vidéo + audio, ou audio seul.",
-  "nav": {
-    "section": "traitements",
-    "label": "Traitements",
-    "route": "/traitements/delay",
-    "order": 50
-  },
+  "nav": { "section": "traitements", "label": "Traitements", "route": "/traitements", "order": 40 },
   "script_template": "script.py",
   "video_format": false,
   "ui": {
