@@ -1,7 +1,7 @@
 {
   "plugin.delay.col_channel": "Canal",
   "plugin.delay.col_delay": "Délai",
-  "plugin.delay.col_real": "Délai réel mesuré",
+  "plugin.delay.col_real": "Délai total mesuré",
   "plugin.delay.err_set": "Réglage : ",
   "plugin.delay.error": "Erreur : {msg}",
   "plugin.delay.global": "Délai global",
