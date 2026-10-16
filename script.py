@@ -272,6 +272,10 @@ class MetricsHandler(BaseHTTPRequestHandler):
                                              # `delai_etage_trames` soit le même partout.
                                              "propage": False, "non_mesurable": 0}}),
                     "plugin_version": PLUGIN_VERSION}}
+        # Bouches-trous amont ÉCARTÉS (cf. bobimxl.MXL_GRAIN_FLAG_INVALID) : seul témoin du
+        # comblement d'un trou par le producteur — cadence, index et statut de lecture restent
+        # tous parfaits pendant l'épisode. Calculé à la requête : aucun coût par trame.
+        payload["invalid_grains"] = bobimxl.invalid_grains_report()
         body = json.dumps(payload).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -743,9 +747,17 @@ def _worker_video(idx):
                         start = cur_idx - V_RING_SIZE + 1
                     for fi in range(start, cur_idx + 1):
                         got = reader.get(fi, 20_000_000)   # rattrapage sans drop
-                        if got is None:
-                            continue                       # grain hors historique → sauté
                         ts_est = ts_in - int((cur_idx - fi) * est_ms * 1e6)
+                        if got is None:
+                            # Grain hors historique, OU bouche-trou amont écarté par bobimxl
+                            # (MXL_GRAIN_FLAG_INVALID). RÉPÉTER la dernière image au lieu de sauter :
+                            # la ligne à retard doit garder sa LONGUEUR, sinon la purge `len(buf) > D`
+                            # émet une image de moins et le retard est amputé d'autant — un à-coup sur
+                            # la sortie pour un trou d'UNE image en entrée. Rien à répéter encore → on
+                            # saute, comme avant.
+                            if buf:
+                                buf.append((buf[-1][0], ts_est, fi))
+                            continue
                         buf.append((bytes(got[2]), ts_est, fi))
                     with meas_lock:
                         if prev_ts and ts_in > prev_ts:
@@ -792,9 +804,17 @@ def _worker_video(idx):
                 start = cur_idx - V_RING_SIZE + 1
             for fi in range(start, cur_idx + 1):
                 got = reader.get(fi, 20_000_000)   # rattrapage sans drop (grain fi précis)
-                if got is None:
-                    continue                       # grain hors historique → sauté
                 ts_est = ts_in - int((cur_idx - fi) * est_ms * 1e6)
+                if got is None:
+                    # Grain hors historique, OU bouche-trou amont écarté par bobimxl
+                    # (MXL_GRAIN_FLAG_INVALID). RÉPÉTER la dernière image au lieu de sauter :
+                    # la ligne à retard doit garder sa LONGUEUR, sinon la purge `len(buf) > D`
+                    # émet une image de moins et le retard est amputé d'autant — un à-coup sur
+                    # la sortie pour un trou d'UNE image en entrée. Rien à répéter encore → on
+                    # saute, comme avant.
+                    if buf:
+                        buf.append((buf[-1][0], ts_est, fi))
+                    continue
                 buf.append((bytes(got[2]), ts_est, fi))
             if prev_ts and ts_in > prev_ts:
                 with meas_lock: meas["v"][idx]["period"].push((ts_in - prev_ts) / 1e6 / max(1, advance))
