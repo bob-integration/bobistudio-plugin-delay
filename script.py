@@ -216,7 +216,13 @@ state = {{
 # Mesures par canal/essence (remplies par les workers). `period` = période entre frames
 # de l'entrée vidéo (ms), mesurée depuis les timestamps producteur → sert à convertir
 # le délai (en images) en chunks audio sans fps configuré.
-meas_lock = threading.Lock()
+# RLock et non Lock : `_periode_ms()` lit `meas` pour convertir la consigne image en ms, et il est
+# appelé DEPUIS des sections qui tiennent déjà ce verrou (handlers :8080 et /state, qui prennent
+# `meas_lock` pour tout le corps de la réponse). Avec un Lock simple, la première requête se
+# bloquait sur elle-même : script vivant, journal muet, et les DEUX ports morts — constaté en
+# service le 25/10, 0.14.4. Un verrou non réentrant appelé depuis une fonction utilitaire est un
+# piège qui ne se voit qu'à l'exécution.
+meas_lock = threading.RLock()
 meas = {{
     # `stamp` = RÈGLE D'ESTAMPILLAGE réellement appliquée à la sortie de ce canal (cf.
     # `_out_index`) : "output" = le grain porte la coordonnée de maintenant, "origin" = il porte

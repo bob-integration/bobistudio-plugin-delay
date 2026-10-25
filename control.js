@@ -129,16 +129,21 @@ window.MXLPlugins.delay = (function () {
             <input type="number" class="dl-num dl-ch-num" min="0" max="${state.max_delay}" step="1"
                    value="${c.delay_frames}" ${link ? 'disabled' : ''} data-role="channel" data-ch="${c.idx}">
             <span class="dl-unit">${unitShort()}</span>
+            ${!duo ? '' : `
+            <input type="number" class="dl-num dl-a-ch-num" min="0" max="${state.max_delay_ms_a || 10000}"
+                   step="0.1" value="${c.delay_ms_a != null ? c.delay_ms_a : 0}"
+                   ${(avLink || link) ? 'disabled' : ''} data-role="channel-audio" data-ch="${c.idx}">
+            <span class="dl-unit">${duo ? 'ms' : ''}</span>`}
             <span class="dl-real" data-role="real" data-ch="${c.idx}">${realHtml(c)}</span>
           </div>`).join('');
 
         EL.innerHTML = `
-          <div class="dl-wrap">
+          <div class="dl-wrap${duo ? ' has-audio' : ''}">
             ${head}
             ${globalRow}
             ${avRow}
             <div class="dl-rows-head">
-              <span>${esc(T('plugin.delay.col_channel', 'Canal'))}</span><span></span><span>${esc(T('plugin.delay.col_delay', 'Délai'))}</span><span></span><span>${esc(T('plugin.delay.col_real', 'Délai réel mesuré'))}</span>
+              <span>${esc(T('plugin.delay.col_channel', 'Canal'))}</span><span></span><span>${esc(T('plugin.delay.col_delay', 'Délai'))}</span><span></span>${duo ? `<span>${esc(T('plugin.delay.col_delay_a', 'Délai son'))}</span><span></span>` : ''}<span>${esc(T('plugin.delay.col_real', 'Délai réel mesuré'))}</span>
             </div>
             <div class="dl-rows">${rows}</div>
           </div>`;
@@ -178,6 +183,13 @@ window.MXLPlugins.delay = (function () {
                 const inp = EL.querySelector(`.dl-ch-num[data-ch="${c.idx}"]`);
                 if (inp && document.activeElement !== inp) {
                     inp.value = c.delay_frames; inp.disabled = link;
+                }
+            }
+            if (!(editing && editing.kind === 'channel-audio' && editing.i === c.idx)) {
+                const ia = EL.querySelector(`.dl-a-ch-num[data-ch="${c.idx}"]`);
+                if (ia && document.activeElement !== ia) {
+                    if (c.delay_ms_a != null) ia.value = c.delay_ms_a;
+                    ia.disabled = (state.av_link !== false) || link;
                 }
             }
         });
@@ -239,6 +251,14 @@ window.MXLPlugins.delay = (function () {
             inp.addEventListener('blur', () => editing = null);
             inp.addEventListener('change', () => {
                 postParams({ channel: i, delay_frames: parseInt(inp.value, 10) || 0 });
+            });
+        });
+        EL.querySelectorAll('.dl-a-ch-num').forEach(inp => {
+            const i = parseInt(inp.dataset.ch, 10);
+            inp.addEventListener('focus', () => editing = { kind: 'channel-audio', i });
+            inp.addEventListener('blur', () => editing = null);
+            inp.addEventListener('change', () => {
+                postParams({ channel: i, delay_ms_a: parseFloat(inp.value) || 0 });
             });
         });
     }

@@ -21,9 +21,14 @@
 .dl-global-num { width:96px; font-size:1.05em; }
 .dl-unit { color:var(--text-muted); font-size:0.85em; }
 
+/* Cinq colonnes (canal, essences, délai, unité, mesure) ; SEPT quand le délai son a sa propre
+   consigne par canal — l'en-tête et les lignes partagent le même gabarit, donc la variante se
+   pose sur le conteneur et non sur chaque ligne, sans quoi les deux se désaligneraient. */
 .dl-rows-head, .dl-row {
     display:grid; grid-template-columns: 48px 56px 96px 40px 1fr;
     gap:8px; align-items:center; padding:4px 6px; }
+.dl-wrap.has-audio .dl-rows-head, .dl-wrap.has-audio .dl-row {
+    grid-template-columns: 48px 56px 96px 40px 96px 32px 1fr; }
 .dl-rows-head { font-size:0.72em; color:var(--text-muted); text-transform:uppercase;
     letter-spacing:0.05em; padding-bottom:0; }
 .dl-rows { display:flex; flex-direction:column; gap:2px; }
