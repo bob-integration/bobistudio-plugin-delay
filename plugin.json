@@ -8,7 +8,7 @@
     "class": "mode-corrector",
     "oklch": "0.80 0.05 110"
   },
-  "version": "0.14.2",
+  "version": "0.14.3",
   "adapts_input": true,
   "description": "Ligne à retard N→N : X entrées vidéo/audio retardées de D images vers X sorties correspondantes. Délai global ou par canal, réglé en images, piloté à chaud (page Traitements). Vidéo seul (défaut), vidéo + audio, ou audio seul.",
   "nav": { "section": "traitements", "label": "Traitements", "route": "/traitements", "order": 40 },

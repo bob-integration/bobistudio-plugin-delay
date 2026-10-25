@@ -201,8 +201,13 @@ state = {{
 # le délai (en images) en chunks audio sans fps configuré.
 meas_lock = threading.Lock()
 meas = {{
-    "v": [{{"fps": 0.0, "nominal": 0.0, "frame_index": 0, "ms": RollingMs(), "realized": 0, "period": RollingMs(), "transit": RollingMs()}} for _ in range(N_CHANNELS)],
-    "a": [{{"fps": 0.0, "frame_index": 0, "ms": RollingMs(), "realized": 0, "transit": RollingMs()}} for _ in range(N_CHANNELS)],
+    # `stamp` = RÈGLE D'ESTAMPILLAGE réellement appliquée à la sortie de ce canal (cf.
+    # `_out_index`) : "output" = le grain porte la coordonnée de maintenant, "origin" = il porte
+    # celle de sa source. Publié parce qu'un consommateur ne peut pas la DEVINER, et qu'elle
+    # décide de la lisibilité du flux (console) comme de la justesse d'un ISO (enregistreur).
+    # L'audio est toujours "output" (AudioWriter en mode "tai"), la vidéo l'est sauf en entrelacé.
+    "v": [{{"fps": 0.0, "nominal": 0.0, "frame_index": 0, "ms": RollingMs(), "realized": 0, "period": RollingMs(), "transit": RollingMs(), "stamp": None}} for _ in range(N_CHANNELS)],
+    "a": [{{"fps": 0.0, "frame_index": 0, "ms": RollingMs(), "realized": 0, "transit": RollingMs(), "stamp": "output"}} for _ in range(N_CHANNELS)],
 }}
 
 # SIGBUS : signale aux workers de rouvrir leurs flux MXL
@@ -229,12 +234,14 @@ class MetricsHandler(BaseHTTPRequestHandler):
                     out.append({{"idx": i, "essence": "video", "fps": m["fps"],
                                 "frame_index": m["frame_index"],
                                 "delay_frames": state["delays"][i],
+                                "stamp": m["stamp"],
                                 "delay_ms": m["ms"].avg()}})
                 if HAS_AUDIO:
                     m = meas["a"][i]
                     out.append({{"idx": i, "essence": "audio", "fps": m["fps"],
                                 "frame_index": m["frame_index"],
                                 "delay_frames": state["delays"][i],
+                                "stamp": m["stamp"],
                                 "delay_ms": m["ms"].avg()}})
             # Lu SOUS state_lock, comme les `delay_frames` ci-dessus : le handler de contrôle
             # modifie `state["delays"]` à chaud. La 1re rédaction lisait hors verrou, en
@@ -255,12 +262,17 @@ class MetricsHandler(BaseHTTPRequestHandler):
                     own_vals.append(ov)
         own_latency_ms = round(max(own_vals), 1) if own_vals else None
         # DÉLAI D'ÉTAGE en TRAMES, pour la page Câbles. Ce module-ci n'a rien à MESURER : retarder
-        # est son métier, et il connaît exactement de combien. On ne passe donc PAS par
-        # bobimxl.StageDelay, qui déduit le délai de l'écart d'index — et qui rendrait 0 ici,
-        # puisque le grain de sortie PROPAGE la coordonnée source (open_grain(src_index=)) : le
-        # contenu part avec son horodatage d'origine, simplement N trames plus tard. Publier 0
-        # pour le seul module dont la fonction est d'ajouter du délai serait le plus grossier des
-        # échecs silencieux. On retient le PIRE canal : c'est lui qui décrit la chaîne.
+        # est son métier, et il connaît exactement de combien. On publie donc la valeur VOULUE,
+        # sans passer par bobimxl.StageDelay — publier 0 pour le seul module dont la fonction est
+        # d'ajouter du délai serait le plus grossier des échecs silencieux. On retient le PIRE
+        # canal : c'est lui qui décrit la chaîne.
+        # ⚠ Ce commentaire disait, jusqu'à la 0.14.3, que StageDelay « rendrait 0 ici puisque le
+        # grain de sortie PROPAGE la coordonnée source ». Ce n'est plus vrai : depuis que la
+        # sortie est estampillée à la sortie (cf. `_out_index`), une mesure par le TEMPS retrouve
+        # le délai toute seule. La valeur publiée ici devient donc un RECOUPEMENT de la mesure
+        # automatique au lieu d'en être l'unique source — deux témoins indépendants qui doivent
+        # concorder. Ils ne concordent pas en entrelacé, où la propagation subsiste : la clé
+        # `stamp` de chaque canal dit laquelle des deux règles s'applique.
         # Cf. docs/reference/LATENCE_CHAINE.md.
         payload = {{"channels": out, "inputs_latency_ms": ilm,
                     "own_latency_ms": own_latency_ms, "slice_mode": _slice_active[0],
@@ -513,13 +525,50 @@ def _copy_band(dst, src, a, b, geo):
     return b
 
 
+# ─── RÈGLE D'ESTAMPILLAGE DE LA SORTIE ──────────────────────────────────────────────────────
+# Un grain de sortie porte la coordonnée de MAINTENANT, pas celle de son origine. Autrement dit
+# ce module DÉPLACE le contenu sur la grille : c'est son métier.
+#
+# Jusqu'à la 0.14.2 la vidéo propageait l'index source (`open_grain(src_index=)`) tandis que
+# l'audio, lui, était déjà estampillé à la sortie (`AudioWriter.write()` sans index, mode "tai" :
+# l'index vaut `index_courant - n`, le bloc qui se termine maintenant). Les deux essences
+# suivaient donc deux règles DIFFÉRENTES, et un enregistreur placé derrière ce plugin en mode
+# `video_audio` sortait décalé du délai appliqué — il apparie la trame k avec l'audio du même
+# instant TAI, or l'image portait son instant d'ORIGINE et le son celui de la sortie. Unifier,
+# c'est aligner la vidéo sur l'audio, pas inventer une convention.
+#
+# Deux raisons de choisir la sortie plutôt que l'origine, dans cet ordre :
+#  1. la console audio lit toutes ses entrées sur UNE grille TAI (bloc r0 à l'instant r0+B+M) :
+#     un échantillon estampillé dans le passé n'est pas encore écrit quand elle passe, donc elle
+#     sort du SILENCE. Contrainte dure, vérifiée avec la session Audio ;
+#  2. côté vidéo, l'index propagé « marchait » seulement par le REPLI du mélangeur
+#     (`_sl_bind` : au-delà de 2 images d'écart il prend la tête du flux au lieu de l'index
+#     demandé), repli que son propre compteur ne compte même pas. Marcher par un repli silencieux
+#     n'est pas marcher.
+#
+# ⚠ ENTRELACÉ : NON CONVERTI, et c'est délibéré. L'index y est une coordonnée de CHAMP
+# (2·trame + parité) sur un flux déclaré à la cadence TRAME. `Writer.next_index()` raisonne à la
+# cadence du flow_def, donc il rendrait un numéro de TRAME — faux d'un facteur deux — et le
+# calculer à la main (2·grille + parité) perdrait le cliquet et la borne que bobimxl tient
+# désormais. Il manque à bobimxl un index de grille à la cadence CHAMP ; tant qu'il n'existe pas,
+# le chemin entrelacé continue de propager, et il le DIT (clé `stamp` sur :8080) plutôt que de
+# publier un index faux. Un enregistreur derrière un delay entrelacé + audio reste donc décalé.
+def _out_index(writer, in_idx, interlaced):
+    """Index du grain de sortie. Entrelacé → index d'entrée propagé (cf. l'avertissement
+    ci-dessus) ; sinon la coordonnée de maintenant sur la grille, via `next_index()` qui porte le
+    cliquet et la borne d'avance de bobimxl."""
+    if interlaced:
+        return {{"src_index": in_idx}}
+    return {{"index": writer.next_index()}}
+
+
 def _emit_frame_sliced(writer, geo, in_idx, data):
     """MODE TRANCHE, D ≥ 1 — ré-émet un grain source déjà COMPLET en le RE-TRANCHANT : copie
     bande par bande + commit progressif (validSlices=1..N, quasi gratuit) → l'aval slice-aware
     démarre sur la 1ʳᵉ bande au lieu d'attendre la trame. Index source propagé (open_grain
     (index=in_idx), même contrat que l'historique : parité de champ / retard par index).
     Commit FINAL garanti (un grain laissé partiel ne serait jamais lisible)."""
-    _i, gi, vw = writer.open_grain(src_index=in_idx)
+    _i, gi, vw = writer.open_grain(**_out_index(writer, in_idx, False))
     try:
         src = np.frombuffer(data, dtype=np.uint8)
         if src.size < geo["fr_sz"]:
@@ -594,6 +643,10 @@ def _worker_video(idx):
     reader = None; in_name = None; writer = None
     buf = deque(); last_in_idx = -1; prev_ts = 0; out_idx = 0
     geo = None                       # géométrie sortie (MODE TRANCHE) ; None = pas encore lue
+    itl = False                      # sortie entrelacée ? (décide la règle d'estampillage, cf.
+                                     # `_out_index`) — posé à la création du writer, et il FAUT
+                                     # une valeur avant : le writer peut survivre à un tour de
+                                     # boucle où `reader.format()` n'a rien rendu.
     last_fresh_ns = time.time_ns()   # dernier grain frais (watchdog stale du suivi de tête)
     fps_t0 = time.time(); fps_n = 0
     while True:
@@ -639,6 +692,8 @@ def _worker_video(idx):
                 log("v[%d] slice_mode actif : sortie %s tranchée par %d lignes (%d tranches)"
                     % (idx, out_name, geo["sh"], geo["total"]), "info")
         if SLICE_MODE and geo is not None and geo["sh"]:
+            if meas["v"][idx]["stamp"] != "output":
+                with meas_lock: meas["v"][idx]["stamp"] = "output"   # tranche ⇒ progressif
             if head == bobimxl.MXL_UNDEFINED_INDEX or head <= 0:
                 time.sleep(POLL_V); continue
             if head - 1 < last_in_idx - 1:
@@ -684,7 +739,9 @@ def _worker_video(idx):
                 deadl = time.monotonic_ns() + int(1.5e9 * geo["period_s"])
                 wait_ns = 0   # cumul des ATTENTES get_slice — EXCLUES de own/delay_ms
                 try:
-                    _i, gi_o, vw = writer.open_grain(src_index=gidx)   # origin timestamp propagé
+                    # MODE TRANCHE : progressif par construction (repli image entière
+                    # en entrelacé), donc toujours estampillé à la sortie.
+                    _i, gi_o, vw = writer.open_grain(**_out_index(writer, gidx, False))
                     written = 0; k_done = 0
                     try:
                         for j in range(1, total + 1):
@@ -826,16 +883,27 @@ def _worker_video(idx):
             if writer is None:
                 f = reader.format()
                 if f:
+                    itl = str(f.get("interlace_mode") or "progressive").startswith("interlaced")
+                    with meas_lock:
+                        meas["v"][idx]["stamp"] = "origin" if itl else "output"
                     # champ-natif : on déclare la sortie au format TRAME + interlace (passthrough) ;
                     # le grain forwardé = 1 champ, écrit à l'index d'entrée (parité préservée).
                     writer = bobimxl.Writer(_mxl_inst, out_name, f["width"],
                                             f.get("frame_height", f["height"]), f["chroma"],
                                             f["bit_depth"], f.get("frame_fps_num", f["fps_num"]),
                                             f["fps_den"], interlace=f.get("interlace_mode", "progressive"))
+            # ⚠ `len(buf) > D` vide le tampon d'un coup quand D vient de BAISSER. Avec
+            # l'estampillage à la sortie, les images en surplus tombent dans le même créneau de
+            # grille : bobimxl en publie INDEX_BAND + 1 et RETIENT le reste, qui est abandonné et
+            # compté (`held`/`dropped` d'`index_report`, publiés sur :8080). La propagation
+            # d'index, elle, les republiait dans le passé — où un lecteur ne les voyait pas
+            # forcément. L'abandon est plus honnête, il n'est pas gratuit : baisser un délai de
+            # 6 images à 0 coûte quelques images, visibles au compteur. Cf.
+            # tests/verif_delay_estampillage.py.
             while writer is not None and len(buf) > D:
                 data, ts_orig, in_idx = buf.popleft()
                 try:
-                    _i, gi, vw = writer.open_grain(src_index=in_idx)   # index d'entrée → parité de champ
+                    _i, gi, vw = writer.open_grain(**_out_index(writer, in_idx, itl))
                     vw[:len(data)] = np.frombuffer(data, dtype=np.uint8)
                     writer.commit(gi)
                 except Exception:
