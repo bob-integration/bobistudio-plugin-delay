@@ -189,8 +189,25 @@ _link_cfg = CONFIG.get("link")
 _boot_link = bool(_link_cfg) if _link_cfg is not None else True
 
 state_lock = threading.Lock()
+_avl_cfg = CONFIG.get("av_link")
+_boot_av_link = bool(_avl_cfg) if _avl_cfg is not None else True
+_boot_delays_a = [0.0] * N_CHANNELS
+
 state = {{
-    "delays":   _boot_delays,                # consigne par canal, en IMAGES
+    "delays":   _boot_delays,                # consigne VIDÉO par canal, en IMAGES
+    # Consigne AUDIO par canal, en MILLISECONDES (dixième de ms), utilisée seulement quand
+    # `av_link` est faux. Pourquoi deux unités : l'image n'a de sens qu'en nombre d'images (elle
+    # ne peut pas sortir entre deux créneaux), le son se règle au plus fin — la console n'impose
+    # aucune granularité, elle lit par index, et le lip-sync se juge au dixième de ms. Les
+    # convertir en une unité commune reviendrait à mentir sur l'un des deux côtés.
+    "delays_a": _boot_delays_a,
+    # COUPLAGE : vrai = le son suit l'image (une seule consigne, convertie par la période vidéo
+    # mesurée) ; faux = deux consignes indépendantes.
+    # ⚠ DÉCOUPLÉ, un enregistreur placé derrière ce plugin sort décalé de la DIFFÉRENCE des deux
+    # consignes — il apparie la trame k avec l'audio du même instant TAI. C'est le but du
+    # découplage (régler image et son séparément), pas un défaut, mais ça doit être ÉCRIT là où
+    # l'exploitant règle, pas découvert sur un ISO.
+    "av_link":  _boot_av_link,
     "link":     _boot_link,                  # délai global (les canaux suivent)
     "inputs_v": [(CONFIG.get("input_v_%d" % (i + 1)) or None) for i in range(N_CHANNELS)],
     "inputs_a": [(CONFIG.get("input_a_%d" % (i + 1)) or None) for i in range(N_CHANNELS)],
@@ -219,6 +236,24 @@ signal.signal(signal.SIGBUS, _handle_sigbus)
 
 
 # ─── HTTP : metrics 8080 + control 8082 ─────────────────────
+def _periode_ms(i=0):
+    """Période vidéo mesurée du canal (ms), ou 40 ms à défaut — borne haute sûre (25p), choisie
+    pour ne JAMAIS sous-estimer le plafond audio avant la première mesure."""
+    with meas_lock:
+        pv = meas["v"][i]["period"].avg() if HAS_VIDEO else None
+    return pv if (pv and pv > 0) else 40.0
+
+
+def _clamp_delay_ms(v):
+    """Consigne audio en ms, bornée au même horizon que la consigne vidéo (`max_delay_frames`
+    images), au dixième de ms."""
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    return round(max(0.0, min(MAX_DELAY * _periode_ms(), f)), 1)
+
+
 def _clamp_delay(v):
     try: v = int(round(float(v)))
     except (TypeError, ValueError): return None
@@ -238,9 +273,16 @@ class MetricsHandler(BaseHTTPRequestHandler):
                                 "delay_ms": m["ms"].avg()}})
                 if HAS_AUDIO:
                     m = meas["a"][i]
+                    # `delay_set_ms` = consigne APPLIQUÉE à cette essence (couplé : la consigne
+                    # vidéo convertie) ; `delay_ms` = retard RÉALISÉ, mesuré. Les deux, parce que
+                    # c'est leur écart qui dit si le plugin tient sa consigne.
                     out.append({{"idx": i, "essence": "audio", "fps": m["fps"],
                                 "frame_index": m["frame_index"],
                                 "delay_frames": state["delays"][i],
+                                "delay_set_ms": (round(state["delays"][i] * _periode_ms(i), 1)
+                                                 if (state["av_link"] and not AUDIO_ONLY)
+                                                 else state["delays_a"][i]),
+                                "av_link": state["av_link"],
                                 "stamp": m["stamp"],
                                 "delay_ms": m["ms"].avg()}})
             # Lu SOUS state_lock, comme les `delay_frames` ci-dessus : le handler de contrôle
@@ -329,6 +371,14 @@ class ControlHandler(BaseHTTPRequestHandler):
                     "has_video": HAS_VIDEO, "has_audio": HAS_AUDIO,
                     "input_v": state["inputs_v"][i], "input_a": state["inputs_a"][i],
                     "delay_frames": state["delays"][i],
+                    # Consigne AUDIO en ms : la VALEUR APPLIQUÉE, pas la valeur réglée — couplé,
+                    # c'est la consigne vidéo convertie par la période mesurée. L'interface et une
+                    # macro doivent lire ce que le plugin fait, pas ce qu'on lui a demandé.
+                    "delay_ms_a": (round(state["delays"][i] * _periode_ms(i), 1)
+                                   if (state["av_link"] and not AUDIO_ONLY)
+                                   else state["delays_a"][i]),
+                    "av_link": state["av_link"],
+                    "stamp_v": mv["stamp"], "stamp_a": ma["stamp"],
                     "measured_ms": (mv["ms"].avg() if HAS_VIDEO else ma["ms"].avg()),
                     "realized_frames": (mv["realized"] if HAS_VIDEO else ma["realized"]),
                     "fps": (mv["fps"] if HAS_VIDEO else ma["fps"]),
@@ -348,6 +398,21 @@ class ControlHandler(BaseHTTPRequestHandler):
                 if HAS_AUDIO: flat["input_a_%d" % (i + 1)] = state["inputs_a"][i]
         self._reply(200, dict(flat, **{{
             "mode": MODE, "n_channels": N_CHANNELS, "max_delay": MAX_DELAY,
+            "av_link": state["av_link"],
+            "max_delay_ms_a": round(MAX_DELAY * _periode_ms(), 1),
+            # Consignes GLOBALES (canal 1) : chemin de lecture du `param_tree` global, dont les
+            # groupes lisent à la racine de /state et non dans `channels[]`.
+            "delay_frames": state["delays"][0],
+            "delay_ms_a": (round(state["delays"][0] * _periode_ms(), 1)
+                           if (state["av_link"] and not AUDIO_ONLY) else state["delays_a"][0]),
+            # BORNES VIVANTES (contrat `caps`, cf. app/macros.py:_caps_bounds et le modèle split) :
+            # le plafond audio dépend de la période vidéo MESURÉE, il ne peut pas être une
+            # constante du manifeste. Un champ sans caps NI bornes déclarées est SAUTÉ par le
+            # résolveur — la capacité serait morte sans bruit.
+            "caps": {{"delay_fields": {{
+                "delay_frames": [0, MAX_DELAY, 0],
+                "delay_ms_a": [0.0, round(MAX_DELAY * _periode_ms(), 1), 0.0],
+            }}}},
             "unit": ("ms" if AUDIO_ONLY else "img"), "link": link, "channels": chans,
             "log_level": LOG_LEVEL,   # lisible en condition de macro
             "plugin_version": PLUGIN_VERSION,
@@ -360,6 +425,24 @@ class ControlHandler(BaseHTTPRequestHandler):
             with state_lock:
                 if "link" in body:
                     state["link"] = bool(body["link"])
+                if "av_link" in body:
+                    state["av_link"] = bool(body["av_link"])
+                # Consigne AUDIO (découplé) : même grammaire que la vidéo — globale
+                # ({{delay_ms_a, all:true}} ou canaux liés), par canal, ou liste complète.
+                if "delay_ms_a" in body:
+                    da = _clamp_delay_ms(body.get("delay_ms_a"))
+                    if da is not None:
+                        if body.get("all") or (state["link"] and "channel" not in body):
+                            state["delays_a"] = [da] * N_CHANNELS
+                        else:
+                            i = body.get("channel")
+                            if isinstance(i, int) and 0 <= i < N_CHANNELS:
+                                state["delays_a"][i] = da
+                elif isinstance(body.get("delays_a"), list):
+                    for i, v in enumerate(body["delays_a"]):
+                        if i >= N_CHANNELS: break
+                        da = _clamp_delay_ms(v)
+                        if da is not None: state["delays_a"][i] = da
                 # Délai global : {{delay_frames, all:true}} ou link actif
                 if body.get("all") or (state["link"] and "delay_frames" in body and "channel" not in body):
                     d = _clamp_delay(body.get("delay_frames"))
@@ -436,12 +519,16 @@ def _worker(essence, idx):
         with state_lock:
             wanted = state["inputs_a"][idx]
             D_frames = state["delays"][idx]
+            D_ms_a = state["delays_a"][idx]
+            couple = state["av_link"]
         if AUDIO_ONLY:
             D = int(round(D_frames))                 # audio seul : délai = durée en ms (1 bloc = 1 ms)
-        else:
-            with meas_lock:                          # apparié vidéo : délai en images → ms (période vidéo)
+        elif couple:
+            with meas_lock:                          # couplé : délai en images → ms (période vidéo)
                 pv = meas["v"][idx]["period"].avg()
             D = int(round(D_frames * pv)) if (pv and pv > 0) else 0
+        else:
+            D = int(round(D_ms_a))                   # découplé : consigne audio propre, en ms
         if D < 0: D = 0
 
         # (re)câblage de l'entrée

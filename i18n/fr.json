@@ -1,7 +1,10 @@
 {
+  "plugin.delay.av_link": "Image et son couplés",
+  "plugin.delay.av_warn": "⚠ Découplé : un enregistreur placé derrière ce délai sortira décalé de la différence des deux consignes — il apparie l'image avec le son du même instant. C'est le but du découplage, mais l'ISO en portera la trace.",
   "plugin.delay.col_channel": "Canal",
   "plugin.delay.col_delay": "Délai",
   "plugin.delay.col_real": "Délai total mesuré",
+  "plugin.delay.delay_a": "Délai son",
   "plugin.delay.err_set": "Réglage : ",
   "plugin.delay.error": "Erreur : {msg}",
   "plugin.delay.global": "Délai global",

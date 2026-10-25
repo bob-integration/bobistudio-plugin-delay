@@ -47,3 +47,10 @@
 .dl-error { padding:8px 12px; border:1px solid var(--status-stopped-fg);
     background:var(--status-stopped-bg); color:var(--status-stopped-fg);
     border-radius:4px; font-size:0.88em; }
+
+/* Couplage image/son : même gabarit que la ligne globale, séparée par un filet pour qu'on ne
+   confonde pas « lier les canaux » (entre canaux) et « coupler image et son » (entre essences). */
+.dl-av { border-top: 1px solid var(--bordure, #2a2a2a); margin-top: .35rem; padding-top: .45rem; }
+.dl-warn { margin: .35rem 0 0; padding: .4rem .55rem; border-radius: 4px;
+           background: color-mix(in oklch, var(--alerte, #b58900) 18%, transparent);
+           border-left: 3px solid var(--alerte, #b58900); font-size: .82rem; line-height: 1.35; }

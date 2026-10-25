@@ -96,6 +96,29 @@ window.MXLPlugins.delay = (function () {
             </label>
           </div>`;
 
+        // COUPLAGE IMAGE/SON. Visible seulement si ce délai porte les deux essences : sur un
+        // canal vidéo seul ou audio seul, la question ne se pose pas et un interrupteur sans
+        // effet est pire qu'absent.
+        const duo = chans.some(c => c.has_video && c.has_audio);
+        const avLink = (state.av_link !== false);
+        const msA = chans.length && chans[0].delay_ms_a != null ? chans[0].delay_ms_a : 0;
+        const avRow = !duo ? '' : `
+          <div class="dl-global dl-av">
+            <label class="dl-link">
+              <input type="checkbox" ${avLink ? 'checked' : ''} data-role="avlink">
+              <span>${esc(T('plugin.delay.av_link', 'Image et son couplés'))}</span>
+            </label>
+            <span class="dl-spacer"></span>
+            <label class="dl-global-label">${esc(T('plugin.delay.delay_a', 'Délai son'))}</label>
+            <input type="number" class="dl-num dl-a-num" min="0" max="${state.max_delay_ms_a || 10000}"
+                   step="0.1" value="${msA}" ${avLink ? 'disabled' : ''} data-role="audio">
+            <span class="dl-unit">ms</span>
+          </div>
+          ${avLink ? '' : `<div class="dl-warn">${esc(T('plugin.delay.av_warn',
+            "⚠ Découplé : un enregistreur placé derrière ce délai sortira décalé de la différence "
+            + "des deux consignes — il apparie l'image avec le son du même instant. C'est le but du "
+            + "découplage, mais l'ISO en portera la trace."))}</div>`}`;
+
         const rows = chans.map(c => `
           <div class="dl-row" data-ch="${c.idx}">
             <span class="dl-ch">#${c.idx + 1}</span>
@@ -113,6 +136,7 @@ window.MXLPlugins.delay = (function () {
           <div class="dl-wrap">
             ${head}
             ${globalRow}
+            ${avRow}
             <div class="dl-rows-head">
               <span>${esc(T('plugin.delay.col_channel', 'Canal'))}</span><span></span><span>${esc(T('plugin.delay.col_delay', 'Délai'))}</span><span></span><span>${esc(T('plugin.delay.col_real', 'Délai réel mesuré'))}</span>
             </div>
@@ -164,6 +188,14 @@ window.MXLPlugins.delay = (function () {
         }
         const lk = EL.querySelector('[data-role="link"]');
         if (lk && document.activeElement !== lk) lk.checked = link;
+        const av = EL.querySelector('[data-role="avlink"]');
+        if (av && document.activeElement !== av) av.checked = (state.av_link !== false);
+        const a = $('.dl-a-num');
+        if (a && !(editing && editing.kind === 'audio') && document.activeElement !== a) {
+            const c0 = (state.channels && state.channels[0]) || null;
+            if (c0 && c0.delay_ms_a != null) a.value = c0.delay_ms_a;
+            a.disabled = (state.av_link !== false);
+        }
     }
 
     // ─── Branchement des contrôles ──────────────────────────
@@ -184,6 +216,23 @@ window.MXLPlugins.delay = (function () {
             if (lk.checked && g) { body.delay_frames = parseInt(g.value, 10) || 0; body.all = true; }
             postParams(body).then(() => refreshState({ fullRebuild: true }));
         });
+        const av = EL.querySelector('[data-role="avlink"]');
+        if (av) av.addEventListener('change', () => {
+            // Le passage couplé → découplé initialise la consigne son sur la valeur APPLIQUÉE
+            // jusque-là (l'image convertie), pour ne pas faire sauter le son au décochage.
+            const body = { av_link: av.checked, all: true };
+            const c0 = (state.channels && state.channels[0]) || null;
+            if (!av.checked && c0 && c0.delay_ms_a != null) body.delay_ms_a = c0.delay_ms_a;
+            postParams(body).then(() => refreshState({ fullRebuild: true }));
+        });
+        const a = $('.dl-a-num');
+        if (a) {
+            a.addEventListener('focus', () => editing = { kind: 'audio' });
+            a.addEventListener('blur', () => editing = null);
+            a.addEventListener('change', () => {
+                postParams({ delay_ms_a: parseFloat(a.value) || 0, all: true });
+            });
+        }
         EL.querySelectorAll('.dl-ch-num').forEach(inp => {
             const i = parseInt(inp.dataset.ch, 10);
             inp.addEventListener('focus', () => editing = { kind: 'channel', i });

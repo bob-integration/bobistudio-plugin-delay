@@ -8,10 +8,15 @@
     "class": "mode-corrector",
     "oklch": "0.80 0.05 110"
   },
-  "version": "0.14.3",
+  "version": "0.14.4",
   "adapts_input": true,
-  "description": "Ligne à retard N→N : X entrées vidéo/audio retardées de D images vers X sorties correspondantes. Délai global ou par canal, réglé en images, piloté à chaud (page Traitements). Vidéo seul (défaut), vidéo + audio, ou audio seul.",
-  "nav": { "section": "traitements", "label": "Traitements", "route": "/traitements", "order": 40 },
+  "description": "Ligne à retard N→N : X entrées vidéo/audio retardées vers X sorties correspondantes. Image et son COUPLÉS (une consigne) ou DÉCOUPLÉS (image en images, son en ms). Délai global ou par canal, piloté à chaud et par macro. Vidéo seul (défaut), vidéo + audio, ou audio seul.",
+  "nav": {
+    "section": "traitements",
+    "label": "Traitements",
+    "route": "/traitements",
+    "order": 40
+  },
   "script_template": "script.py",
   "video_format": false,
   "ui": {
@@ -24,7 +29,9 @@
     "mode": "video",
     "max_delay_frames": 25,
     "delay_frames": 0,
-    "log_level": "info"
+    "log_level": "info",
+    "av_link": true,
+    "delay_ms_a": 0
   },
   "config_schema": [
     {
@@ -54,6 +61,30 @@
           "label": "Audio seul"
         }
       ]
+    },
+    {
+      "key": "av_link",
+      "type": "checkbox",
+      "label": "Image et son couplés",
+      "help": "Couplé (défaut) : une seule consigne règle l'image et le son — le son suit l'image, converti par la période vidéo mesurée. Découplé : deux consignes indépendantes, l'image en images et le son en millisecondes. ⚠ DÉCOUPLÉ, un enregistreur placé derrière ce délai sort décalé de la DIFFÉRENCE des deux consignes : il apparie l'image k avec le son du même instant. C'est le but du découplage (régler l'un sans l'autre), mais l'ISO en portera la trace.",
+      "default": true,
+      "scope": "user",
+      "visible_if": {
+        "mode": "video_audio"
+      }
+    },
+    {
+      "key": "delay_ms_a",
+      "type": "number",
+      "label": "Délai audio initial (ms)",
+      "help": "Utilisé seulement quand l'image et le son sont découplés.",
+      "min": 0,
+      "max": 10000,
+      "default": 0,
+      "scope": "user",
+      "visible_if": {
+        "av_link": false
+      }
     },
     {
       "key": "max_delay_frames",
@@ -205,6 +236,39 @@
       ]
     },
     {
+      "id": "set_delay_audio",
+      "label": "Régler le retard AUDIO (découplé)",
+      "endpoint": "/params",
+      "body": {
+        "all": true
+      },
+      "params": [
+        {
+          "key": "delay_ms_a",
+          "label": "Retard audio (ms)",
+          "type": "number",
+          "default": 0
+        }
+      ]
+    },
+    {
+      "id": "av_link",
+      "label": "Coupler image et son",
+      "endpoint": "/params",
+      "params": [
+        {
+          "key": "av_link",
+          "label": "Couplés",
+          "type": "bool",
+          "default": true
+        }
+      ],
+      "feedback": {
+        "state": "av_link",
+        "value_from": "av_link"
+      }
+    },
+    {
       "id": "link",
       "label": "Lier les canaux",
       "endpoint": "/params",
@@ -260,10 +324,52 @@
       "endpoint": "/state",
       "path": "link",
       "type": "bool"
+    },
+    {
+      "id": "av_link",
+      "label": "Image et son couplés",
+      "endpoint": "/state",
+      "path": "av_link",
+      "type": "bool"
     }
   ],
   "param_tree": {
     "global_groups": [
+      {
+        "label": "Retard",
+        "endpoint": "/params",
+        "caps": "delay_fields",
+        "fields": {
+          "delay_frames": {
+            "label": "Retard image (images)",
+            "type": "number",
+            "min": 0,
+            "max": 10000,
+            "default": 0,
+            "path": "delay_frames"
+          },
+          "delay_ms_a": {
+            "label": "Retard son (ms)",
+            "type": "number",
+            "min": 0,
+            "max": 10000,
+            "default": 0,
+            "path": "delay_ms_a"
+          }
+        }
+      },
+      {
+        "label": "Couplage image/son",
+        "endpoint": "/params",
+        "fields": {
+          "av_link": {
+            "label": "Image et son couplés",
+            "type": "bool",
+            "default": true,
+            "path": "av_link"
+          }
+        }
+      },
       {
         "label": "Journal (diagnostic)",
         "endpoint": "/log_level",

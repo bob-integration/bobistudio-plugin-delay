@@ -1,7 +1,10 @@
 {
+  "plugin.delay.av_link": "Video and audio linked",
+  "plugin.delay.av_warn": "⚠ Unlinked: a recorder placed after this delay will be out of sync by the difference between the two settings — it pairs a frame with the audio of the same instant. That is what unlinking is for, but the ISO will show it.",
   "plugin.delay.col_channel": "Channel",
   "plugin.delay.col_delay": "Delay",
   "plugin.delay.col_real": "Measured total delay",
+  "plugin.delay.delay_a": "Audio delay",
   "plugin.delay.err_set": "Setting: ",
   "plugin.delay.error": "Error: {msg}",
   "plugin.delay.global": "Global delay",
