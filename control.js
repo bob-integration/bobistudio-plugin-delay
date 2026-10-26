@@ -17,7 +17,6 @@ window.MXLPlugins.delay = (function () {
     };
     let state = null;
     let pollTimer = null;
-    let editing = null;   // {kind:'global'|'channel', i} en cours d'édition (anti-écrasement par le poll)
 
     const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
         '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
@@ -85,15 +84,9 @@ window.MXLPlugins.delay = (function () {
         const globalRow = `
           <div class="dl-global">
             <label class="dl-global-label">${esc(T('plugin.delay.global', 'Délai global'))}</label>
-            <input type="number" class="dl-num dl-global-num" min="0" max="${state.max_delay}" step="1"
-                   value="${globalD}" ${link ? '' : 'disabled'}
-                   data-role="global">
-            <span class="dl-unit">${unitLong()}</span>
+            <div class="dl-ctl dl-ctl-wide" data-ctl="global"></div>
             <span class="dl-spacer"></span>
-            <label class="dl-link">
-              <input type="checkbox" ${link ? 'checked' : ''} data-role="link">
-              <span>${esc(T('plugin.delay.link', '🔗 Lier les canaux'))}</span>
-            </label>
+            <div class="dl-ctl" data-ctl="link"></div>
           </div>`;
 
         // COUPLAGE IMAGE/SON. Visible seulement si ce délai porte les deux essences : sur un
@@ -104,15 +97,10 @@ window.MXLPlugins.delay = (function () {
         const msA = chans.length && chans[0].delay_ms_a != null ? chans[0].delay_ms_a : 0;
         const avRow = !duo ? '' : `
           <div class="dl-global dl-av">
-            <label class="dl-link">
-              <input type="checkbox" ${avLink ? 'checked' : ''} data-role="avlink">
-              <span>${esc(T('plugin.delay.av_link', 'Image et son couplés'))}</span>
-            </label>
+            <div class="dl-ctl" data-ctl="avlink"></div>
             <span class="dl-spacer"></span>
             <label class="dl-global-label">${esc(T('plugin.delay.delay_a', 'Délai son'))}</label>
-            <input type="number" class="dl-num dl-a-num" min="0" max="${state.max_delay_ms_a || 10000}"
-                   step="0.1" value="${msA}" ${avLink ? 'disabled' : ''} data-role="audio">
-            <span class="dl-unit">ms</span>
+            <div class="dl-ctl dl-ctl-wide" data-ctl="audio"></div>
           </div>
           ${avLink ? '' : `<div class="dl-warn">${esc(T('plugin.delay.av_warn',
             "⚠ Découplé : un enregistreur placé derrière ce délai sortira décalé de la différence "
@@ -126,14 +114,11 @@ window.MXLPlugins.delay = (function () {
               ${c.has_video ? '<span class="dl-tag v">V</span>' : ''}
               ${c.has_audio ? '<span class="dl-tag a">A</span>' : ''}
             </span>
-            <input type="number" class="dl-num dl-ch-num" min="0" max="${state.max_delay}" step="1"
-                   value="${c.delay_frames}" ${link ? 'disabled' : ''} data-role="channel" data-ch="${c.idx}">
+            <div class="dl-ctl" data-ctl="ch${c.idx}" data-ch="${c.idx}"></div>
             <span class="dl-unit">${unitShort()}</span>
             ${!duo ? '' : `
-            <input type="number" class="dl-num dl-a-ch-num" min="0" max="${state.max_delay_ms_a || 10000}"
-                   step="0.1" value="${c.delay_ms_a != null ? c.delay_ms_a : 0}"
-                   ${(avLink || link) ? 'disabled' : ''} data-role="channel-audio" data-ch="${c.idx}">
-            <span class="dl-unit">${duo ? 'ms' : ''}</span>`}
+            <div class="dl-ctl" data-ctl="cha${c.idx}" data-ch="${c.idx}"></div>
+            <span class="dl-unit">ms</span>`}
             <span class="dl-real" data-role="real" data-ch="${c.idx}">${realHtml(c)}</span>
           </div>`).join('');
 
@@ -148,7 +133,7 @@ window.MXLPlugins.delay = (function () {
             <div class="dl-rows">${rows}</div>
           </div>`;
 
-        wire();
+        monterControles();
     }
 
     // Cadence d'un canal : on affiche l'INTENTION tant qu'elle est tenue, la mesure sinon.
@@ -171,103 +156,136 @@ window.MXLPlugins.delay = (function () {
              + `<strong>${ms}</strong> <span class="meta">(${rf}${live ? ' · ' + fpsHtml(c) : ' · inactif'})</span>`;
     }
 
-    // ─── Mise à jour live (sans reconstruire le DOM) ────────
-    function updateLive() {
-        if (!state) return;
-        const link = !!state.link;
-        (state.channels || []).forEach(c => {
-            const real = EL.querySelector(`[data-role="real"][data-ch="${c.idx}"]`);
-            if (real) real.innerHTML = realHtml(c);
-            // Ne pas écraser un champ en cours d'édition par l'utilisateur
-            if (!(editing && editing.kind === 'channel' && editing.i === c.idx)) {
-                const inp = EL.querySelector(`.dl-ch-num[data-ch="${c.idx}"]`);
-                if (inp && document.activeElement !== inp) {
-                    inp.value = c.delay_frames; inp.disabled = link;
-                }
+    // ─── Contrôles partagés ─────────────────────────────────
+    // RÈGLE DU PROJET (CLAUDE.md) : tout fader, bouton ou afficheur vient du catalogue partagé,
+    // jamais redessiné. Ici ils sont construits par `BobiControls.fromLeaf()` À PARTIR DES
+    // FEUILLES du `param_tree` du conteneur — donc libellé, bornes, pas et point d'appel ont UNE
+    // seule source, la même que celle que voient les macros. Avant cette version, `control.js`
+    // recopiait `max_delay` et `max_delay_ms_a` à la main : deux endroits à tenir d'accord.
+    let CTL = {};          // emplacement → instance de contrôle
+    let LEAVES = null;     // feuilles du param_tree, par clé (chargées une fois)
+    let touche = {};       // emplacement → instant du dernier geste local (anti-écrasement)
+
+    async function chargerFeuilles() {
+        if (LEAVES) return LEAVES;
+        LEAVES = {};
+        try {
+            const r = await fetch(`/api/containers/${VMID}/param_tree`);
+            if (r.ok) {
+                const a = await r.json();
+                (a.groups || []).forEach(g => (g.params || []).forEach(f => { LEAVES[f.key] = f; }));
             }
-            if (!(editing && editing.kind === 'channel-audio' && editing.i === c.idx)) {
-                const ia = EL.querySelector(`.dl-a-ch-num[data-ch="${c.idx}"]`);
-                if (ia && document.activeElement !== ia) {
-                    if (c.delay_ms_a != null) ia.value = c.delay_ms_a;
-                    ia.disabled = (state.av_link !== false) || link;
-                }
-            }
-        });
-        const g = $('.dl-global-num');
-        if (g && !(editing && editing.kind === 'global') && document.activeElement !== g) {
-            const gd = (state.channels && state.channels[0]) ? state.channels[0].delay_frames : 0;
-            g.value = gd; g.disabled = !link;
-        }
-        const lk = EL.querySelector('[data-role="link"]');
-        if (lk && document.activeElement !== lk) lk.checked = link;
-        const av = EL.querySelector('[data-role="avlink"]');
-        if (av && document.activeElement !== av) av.checked = (state.av_link !== false);
-        const a = $('.dl-a-num');
-        if (a && !(editing && editing.kind === 'audio') && document.activeElement !== a) {
-            const c0 = (state.channels && state.channels[0]) || null;
-            if (c0 && c0.delay_ms_a != null) a.value = c0.delay_ms_a;
-            a.disabled = (state.av_link !== false);
-        }
+        } catch (e) { /* bornes de repli ci-dessous : un panneau sans arbre reste utilisable */ }
+        return LEAVES;
     }
 
-    // ─── Branchement des contrôles ──────────────────────────
-    function wire() {
-        const g = $('.dl-global-num');
-        if (g) {
-            g.addEventListener('focus', () => editing = { kind: 'global' });
-            g.addEventListener('blur', () => editing = null);
-            g.addEventListener('change', () => {
-                const v = parseInt(g.value, 10) || 0;
-                postParams({ delay_frames: v, all: true });
-            });
+    // Feuille effective : celle du param_tree si elle existe (bornes VIVANTES, issues de
+    // /state.caps), sinon un repli bâti sur l'état — un panneau doit rester utilisable même si
+    // l'arbre n'a pas pu être lu.
+    function feuille(key, extra) {
+        const base = (LEAVES && LEAVES[key]) || (key === 'delay_frames'
+            ? { key, type: 'number', min: 0, max: state.max_delay || 25, step: 1 }
+            : key === 'delay_ms_a'
+                ? { key, type: 'number', min: 0, max: state.max_delay_ms_a || 1000, step: 0.1 }
+                : { key, type: 'bool' });
+        return Object.assign({}, base, extra || {});
+    }
+
+    function poser(cle, leaf, valeur, desactive, onChange) {
+        const el = EL.querySelector(`[data-ctl="${cle}"]`);
+        if (!el || !window.BobiControls) return null;
+        const inst = window.BobiControls.fromLeaf(Object.assign({}, leaf, { value: valeur }), el);
+        if (!inst) return null;
+        if (inst.setDisabled) inst.setDisabled(!!desactive);
+        inst.on('change', (v) => { touche[cle] = Date.now(); onChange(v); });
+        inst.on('input', () => { touche[cle] = Date.now(); });
+        CTL[cle] = inst;
+        return inst;
+    }
+
+    function monterControles() {
+        CTL = {};
+        const chans = state.channels || [];
+        const link = !!state.link;
+        const avLink = (state.av_link !== false);
+        const duo = chans.some(c => c.has_video && c.has_audio);
+        const c0 = chans[0] || {};
+
+        poser('global', feuille('delay_frames', { label: T('plugin.delay.global', 'Délai global'), unit: unitShort(), integer: true }),
+              c0.delay_frames || 0, !link,
+              v => postParams({ delay_frames: Math.round(v), all: true }));
+
+        poser('link', feuille('link', { label: T('plugin.delay.link', 'Lier les canaux'), type: 'bool' }),
+              link, false, v => {
+                  // En liant, on aligne tous les canaux sur le délai global courant.
+                  const body = { link: !!v };
+                  if (v) { body.delay_frames = c0.delay_frames || 0; body.all = true; }
+                  postParams(body).then(() => refreshState({ fullRebuild: true }));
+              });
+
+        if (duo) {
+            poser('avlink', feuille('av_link', { label: T('plugin.delay.av_link', 'Image et son couplés'), type: 'bool' }),
+                  avLink, false, v => {
+                      // Couplé → découplé : on initialise la consigne son sur la valeur APPLIQUÉE
+                      // jusque-là (l'image convertie), pour que le son ne saute pas au décochage.
+                      const body = { av_link: !!v, all: true };
+                      if (!v && c0.delay_ms_a != null) body.delay_ms_a = c0.delay_ms_a;
+                      postParams(body).then(() => refreshState({ fullRebuild: true }));
+                  });
+            poser('audio', feuille('delay_ms_a', { label: T('plugin.delay.delay_a', 'Délai son'), unit: 'ms' }),
+                  c0.delay_ms_a != null ? c0.delay_ms_a : 0, avLink || !link,
+                  v => postParams({ delay_ms_a: v, all: true }));
         }
-        const lk = EL.querySelector('[data-role="link"]');
-        if (lk) lk.addEventListener('change', () => {
-            // En activant le lien, on aligne tous les canaux sur le délai global courant.
-            const body = { link: lk.checked };
-            if (lk.checked && g) { body.delay_frames = parseInt(g.value, 10) || 0; body.all = true; }
-            postParams(body).then(() => refreshState({ fullRebuild: true }));
+
+        chans.forEach(c => {
+            poser('ch' + c.idx, feuille('delay_frames', { label: `#${c.idx + 1}`, unit: unitShort(), integer: true }),
+                  c.delay_frames || 0, link,
+                  v => postParams({ channel: c.idx, delay_frames: Math.round(v) }));
+            if (duo) {
+                poser('cha' + c.idx, feuille('delay_ms_a', { label: `#${c.idx + 1} son`, unit: 'ms' }),
+                      c.delay_ms_a != null ? c.delay_ms_a : 0, avLink || link,
+                      v => postParams({ channel: c.idx, delay_ms_a: v }));
+            }
         });
-        const av = EL.querySelector('[data-role="avlink"]');
-        if (av) av.addEventListener('change', () => {
-            // Le passage couplé → découplé initialise la consigne son sur la valeur APPLIQUÉE
-            // jusque-là (l'image convertie), pour ne pas faire sauter le son au décochage.
-            const body = { av_link: av.checked, all: true };
-            const c0 = (state.channels && state.channels[0]) || null;
-            if (!av.checked && c0 && c0.delay_ms_a != null) body.delay_ms_a = c0.delay_ms_a;
-            postParams(body).then(() => refreshState({ fullRebuild: true }));
+    }
+
+    // ─── Mise à jour live (sans reconstruire le DOM) ────────
+    // Un contrôle touché il y a moins d'une seconde n'est PAS réécrit : sinon le relevé
+    // périodique arracherait la valeur sous le doigt de l'exploitant en plein geste.
+    const FRAIS_MS = 1000;
+    function majControle(cle, valeur, desactive) {
+        const c = CTL[cle];
+        if (!c) return;
+        if (!(touche[cle] && Date.now() - touche[cle] < FRAIS_MS) && c.set) c.set(valeur);
+        if (c.setDisabled) c.setDisabled(!!desactive);
+    }
+
+    function updateLive() {
+        if (!state) return;
+        const chans = state.channels || [];
+        const link = !!state.link;
+        const avLink = (state.av_link !== false);
+        const duo = chans.some(c => c.has_video && c.has_audio);
+        const c0 = chans[0] || {};
+        chans.forEach(c => {
+            const real = EL.querySelector(`[data-role="real"][data-ch="${c.idx}"]`);
+            if (real) real.innerHTML = realHtml(c);
+            majControle('ch' + c.idx, c.delay_frames || 0, link);
+            if (duo) majControle('cha' + c.idx, c.delay_ms_a != null ? c.delay_ms_a : 0, avLink || link);
         });
-        const a = $('.dl-a-num');
-        if (a) {
-            a.addEventListener('focus', () => editing = { kind: 'audio' });
-            a.addEventListener('blur', () => editing = null);
-            a.addEventListener('change', () => {
-                postParams({ delay_ms_a: parseFloat(a.value) || 0, all: true });
-            });
+        majControle('global', c0.delay_frames || 0, !link);
+        majControle('link', link, false);
+        if (duo) {
+            majControle('avlink', avLink, false);
+            majControle('audio', c0.delay_ms_a != null ? c0.delay_ms_a : 0, avLink || !link);
         }
-        EL.querySelectorAll('.dl-ch-num').forEach(inp => {
-            const i = parseInt(inp.dataset.ch, 10);
-            inp.addEventListener('focus', () => editing = { kind: 'channel', i });
-            inp.addEventListener('blur', () => editing = null);
-            inp.addEventListener('change', () => {
-                postParams({ channel: i, delay_frames: parseInt(inp.value, 10) || 0 });
-            });
-        });
-        EL.querySelectorAll('.dl-a-ch-num').forEach(inp => {
-            const i = parseInt(inp.dataset.ch, 10);
-            inp.addEventListener('focus', () => editing = { kind: 'channel-audio', i });
-            inp.addEventListener('blur', () => editing = null);
-            inp.addEventListener('change', () => {
-                postParams({ channel: i, delay_ms_a: parseFloat(inp.value) || 0 });
-            });
-        });
     }
 
     // ─── Cycle de vie ───────────────────────────────────────
     function mount(el, vmid, ctx) {
         if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
         EL = el; VMID = vmid; TOAST = (ctx && ctx.toast) || (() => {});
-        state = null; editing = null;
+        state = null; CTL = {}; LEAVES = null; touche = {};
         // Le fragment statique porte le français en dur + data-i18n : on le traduit AVANT le premier
         // rendu, sinon l'exploitant voit « Initialisation du délai… » en français une fraction de
         // seconde sur une interface anglaise.
@@ -275,12 +293,13 @@ window.MXLPlugins.delay = (function () {
             const v = window.t(n.dataset.i18n);
             if (v && v !== n.dataset.i18n) n.textContent = v;
         });
-        refreshState({ fullRebuild: true });
+        chargerFeuilles().then(() => refreshState({ fullRebuild: true }));
         pollTimer = setInterval(() => refreshState({ fullRebuild: false }), 1000);
     }
     function unmount() {
         if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
-        EL = null; VMID = null; state = null; editing = null;
+        Object.values(CTL).forEach(c => { try { c.destroy && c.destroy(); } catch (e) { /* démontage */ } });
+        EL = null; VMID = null; state = null; CTL = {}; LEAVES = null; touche = {};
     }
 
     return { mount, unmount };

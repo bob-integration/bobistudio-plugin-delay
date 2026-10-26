@@ -59,3 +59,9 @@
 .dl-warn { margin: .35rem 0 0; padding: .4rem .55rem; border-radius: 4px;
            background: color-mix(in oklch, var(--alerte, #b58900) 18%, transparent);
            border-left: 3px solid var(--alerte, #b58900); font-size: .82rem; line-height: 1.35; }
+
+/* Emplacements des contrôles partagés (BobiControls) : le catalogue dessine DANS ces boîtes, on
+   ne leur donne qu'une largeur et un alignement. Rien de visuel ici — ce qui se voit appartient
+   à static/css/controls.css, sous peine de redessiner le catalogue par la bande. */
+.dl-ctl { display:flex; align-items:center; min-width:0; }
+.dl-ctl-wide { flex:1 1 220px; min-width:140px; }
