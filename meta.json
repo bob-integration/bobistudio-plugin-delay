@@ -1,7 +1,10 @@
 {
-  "version": "0.14.7",
+  "version": "0.14.8",
   "date": "2026-11-09",
   "changes": {
+    "Version minimale du cœur déclarée (0.14.8)": [
+      "Le manifeste déclare `requires.core_min` = 0.9.14 : l'orchestrateur refuse de l'installer sur un cœur plus ancien et le dit. Valeur = le cœur avec lequel la version précédente a été faite. Rien ne change dans le conteneur : rien à redéployer."
+    ],
     "Taille des paquets audio : réglage du cœur (0.14.7)": [
       "La taille des paquets lus/écrits sur le bus audio vient de `bobimxl.audio_grain(CONFIG, …)` (réglage cœur `mxl_audio_grain_us`, Réglages → MXL) au lieu de `SAMPLE_RATE // 1000`. Le bus n'a aucun grain audio : c'est un anneau continu d'échantillons, la taille est un choix du système. Repli à 1 ms (48) si l'orchestrateur est ancien.",
       "Le délai reste une DURÉE : la consigne en ms est convertie en paquets (`A_CHUNK_MS`) et le retard réalisé est republié en ms. À 1 ms rien ne change.",
