@@ -120,7 +120,7 @@ HAS_AUDIO   = MODE in ("audio", "video_audio")
 # audio seul (le retard est une simple durée — pas de notion d'image, pas de fps).
 AUDIO_ONLY  = HAS_AUDIO and not HAS_VIDEO
 POLL_V      = 0.004     # cadence de scrutation des nouvelles frames vidéo (~250 Hz)
-POLL_A      = 0.0005    # idem audio (chunks 1 ms)
+POLL_A      = 0.0005    # idem audio (packets of 1 ms or more)
 
 # ── MODE TRANCHE (chantier latence sous-trame, cf. patch mxl-planar-slices) ─────────────────
 # slice_mode=true → cf. en-tête. slice_lines pilote la granularité CIBLE des tranches de
@@ -164,7 +164,9 @@ V_RING_SIZE   = CONFIG.get("shm_video_ring", 10)
 # ─── Format audio (PCM L24 / 48k / 8ch, identique receiver_2110) ─
 A_SAMPLE_RATE = 48000
 A_CHANNELS    = 8
-A_SAMPLES_PER_CHUNK = A_SAMPLE_RATE // 1000   # 48 (1 ms)
+# Audio packet size on the bus: core setting (Réglages → MXL). An older orchestrator has no helper: 1 ms.
+A_SAMPLES_PER_CHUNK = bobimxl.audio_grain(CONFIG, A_SAMPLE_RATE) if hasattr(bobimxl, "audio_grain") else 48
+A_CHUNK_MS = A_SAMPLES_PER_CHUNK * 1000.0 / A_SAMPLE_RATE   # duration of one buffered packet (1.0 at 1 ms)
 # (ex-shm_audio_ring/A_RING_SIZE/A_BIT_DEPTH/A_BYTES_PER_SAMPLE/A_CHUNK_SIZE/A_HEADER_SIZE/
 # A_TOTAL_SIZE : dimensionnaient un ancien shm maison audio ; retiré 2026-08-09, code mort —
 # l'audio passe par bobimxl.AudioWriter, cf. plus bas.)
@@ -528,13 +530,13 @@ def _worker(essence, idx):
             D_ms_a = state["delays_a"][idx]
             couple = state["av_link"]
         if AUDIO_ONLY:
-            D = int(round(D_frames))                 # audio seul : délai = durée en ms (1 bloc = 1 ms)
+            D = int(round(D_frames / A_CHUNK_MS))    # audio only: delay is a duration in ms, buffered in packets
         elif couple:
             with meas_lock:                          # couplé : délai en images → ms (période vidéo)
                 pv = meas["v"][idx]["period"].avg()
-            D = int(round(D_frames * pv)) if (pv and pv > 0) else 0
+            D = int(round(D_frames * pv / A_CHUNK_MS)) if (pv and pv > 0) else 0
         else:
-            D = int(round(D_ms_a))                   # découplé : consigne audio propre, en ms
+            D = int(round(D_ms_a / A_CHUNK_MS))      # decoupled: own audio setpoint, ms -> packets
         if D < 0: D = 0
 
         # (re)câblage de l'entrée
@@ -577,7 +579,7 @@ def _worker(essence, idx):
                                              sample_rate=A_SAMPLE_RATE)
             except Exception:
                 writer = None
-        # émet les blocs dont le retard D (en blocs = ms) est atteint (flush multiple si D a baissé)
+        # emit the packets whose delay D (in packets) is reached (flush multiple si D a baissé)
         while writer is not None and len(buf) > D:
             blk, t_read = buf.popleft()
             try:
@@ -589,7 +591,7 @@ def _worker(essence, idx):
             out_idx += 1; fps_n += 1
             with meas_lock:
                 meas["a"][idx]["ms"].push((time.time_ns() - t_read) / 1e6)   # retard réalisé (own)
-                meas["a"][idx]["realized"] = len(buf)
+                meas["a"][idx]["realized"] = int(round(len(buf) * A_CHUNK_MS))   # packets -> ms
 
         now = time.time()
         if now - fps_t0 >= 1.0:

@@ -1,7 +1,12 @@
 {
-  "version": "0.12.0",
-  "date": "2026-08-10",
+  "version": "0.14.7",
+  "date": "2026-11-09",
   "changes": {
+    "Taille des paquets audio : réglage du cœur (0.14.7)": [
+      "La taille des paquets lus/écrits sur le bus audio vient de `bobimxl.audio_grain(CONFIG, …)` (réglage cœur `mxl_audio_grain_us`, Réglages → MXL) au lieu de `SAMPLE_RATE // 1000`. Le bus n'a aucun grain audio : c'est un anneau continu d'échantillons, la taille est un choix du système. Repli à 1 ms (48) si l'orchestrateur est ancien.",
+      "Le délai reste une DURÉE : la consigne en ms est convertie en paquets (`A_CHUNK_MS`) et le retard réalisé est republié en ms. À 1 ms rien ne change.",
+      "REDÉPLOIEMENT requis (le script embarque la lecture du réglage)."
+    ],
     "La cadence affichée compare à l'INTENTION (0.12.0)": [
       "`/state` publie `fps_nominal` par canal : la cadence DÉCLARÉE par le flux d'entrée (grains/s — des champs si l'entrée est entrelacée). Un délai est un relais : il n'a pas de cadence propre, l'intention qu'il doit tenir est exactement celle de sa source. Relevé au fil de l'eau et remis à zéro au recâblage.",
       "L'interface affiche désormais la cadence DEMANDÉE tant qu'elle est tenue (« 50 fps »), et la mesure seulement quand elle s'en écarte (« 43/50 fps », en ton d'avertissement). Motif : le champ `fps` compte des trames entières sur une fenêtre d'une seconde, soit ±1 image de troncature ; on affichait « 49,8 fps » sur un canal parfaitement sain, et un chiffre qui bouge en permanence finit par n'être plus regardé.",
